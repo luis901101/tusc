@@ -14,8 +14,7 @@ extension MapExtension<K, V> on Map<K, V> {
     return result;
   }
 
-  Map<String, String> get parseToMapString =>
-      mapWhere(
+  Map<String, String> get parseToMapString => mapWhere(
         (key, value) => MapEntry<String, String>(
             key is String ? key : jsonEncode(key),
             value is String ? value : jsonEncode(value)),

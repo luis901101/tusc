@@ -1,6 +1,6 @@
 # A tus client 
 
-[![Pub Version](https://img.shields.io/pub/v/tus_client)](https://pub.dev/packages/tusc)
+[![Pub Version](https://img.shields.io/pub/v/tusc)](https://pub.dev/packages/tusc)
 
 A tus client written in pure dart for [resumable uploads using tus protocol](https://tus.io/)
 

@@ -43,7 +43,6 @@ class TusMemoryCache implements TusCache {
   }
 }
 
-
 /// This class is used to cache upload url in a persistent way to resume upload
 /// later.
 ///
@@ -60,13 +59,13 @@ class TusPersistentCache implements TusCache {
 
   Future<void> _initHive() async {
     final cachePath = p.join(path, 'tus');
-    if(!PlatformUtils.isWeb) Hive.init(cachePath);
+    if (!PlatformUtils.isWeb) Hive.init(cachePath);
     _isHiveInitialized = true;
   }
 
   Future<void> _openBox() async {
-    if(!_isHiveInitialized) await _initHive();
-    if(!_isBoxOpened) _box = await Hive.openBox('tus-persistent-cache');
+    if (!_isHiveInitialized) await _initHive();
+    if (!_isBoxOpened) _box = await Hive.openBox('tus-persistent-cache');
     _isBoxOpened = _box.isOpen;
   }
 
