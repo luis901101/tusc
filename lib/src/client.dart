@@ -5,12 +5,12 @@ import 'dart:math' show min;
 import 'dart:typed_data' show Uint8List, BytesBuilder;
 
 import 'package:tusc/src/exceptions.dart';
-import 'package:tusc/src/store.dart';
+import 'package:tusc/src/cache.dart';
 import 'package:tusc/src/utils/map_utils.dart';
 import 'package:tusc/src/utils/num_utils.dart';
 import 'package:cross_file/cross_file.dart' show XFile;
 import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as path;
+import 'package:path/path.dart' as p;
 
 /// Callback to listen the progress for sending data.
 /// [count] the length of the bytes that have been sent.
@@ -45,7 +45,7 @@ class TusClient {
 
   /// Storage used to save and retrieve upload URLs by its fingerprint.
   /// This is required if you need to pause/resume uploads.
-  final TusStore? store;
+  final TusCache? cache;
 
   /// Metadata for specific upload server
   final Map<String, dynamic>? metadata;
@@ -80,7 +80,7 @@ class TusClient {
     required this.file,
     int? chunkSize,
     this.tusVersion = defaultTusVersion,
-    this.store,
+    this.cache,
     Map<String, dynamic>? headers,
     this.metadata,
     Duration? timeout,
@@ -95,7 +95,7 @@ class TusClient {
   }
 
   /// Whether the client supports resuming
-  bool get resumingEnabled => store != null;
+  bool get resumingEnabled => cache != null;
 
   /// The URI on the server for the file
   String get uploadUrl => _uploadURI.toString();
@@ -131,7 +131,7 @@ class TusClient {
     }
 
     _uploadURI = _parseToURI(locationURL);
-    store?.set(_fingerprint, _uploadURI.toString());
+    cache?.set(_fingerprint, _uploadURI.toString());
   }
 
   /// Check if it's possible to resume an already started upload
@@ -140,7 +140,7 @@ class TusClient {
     _fileSize = await file.length();
     _pauseUpload = false;
 
-    _uploadURI = Uri.parse(await store?.get(_fingerprint) ?? '');
+    _uploadURI = Uri.parse(await cache?.get(_fingerprint) ?? '');
 
     return _uploadURI.toString().isNotEmpty;
   }
@@ -223,7 +223,7 @@ class TusClient {
 
     if (_offset == _fileSize) {
       // Upload completed
-      store?.remove(_fingerprint);
+      cache?.remove(_fingerprint);
       onComplete?.call(response!);
     }
   }
@@ -256,7 +256,7 @@ class TusClient {
     final meta = metadata?.parseToMapString ?? {};
 
     if (!meta.containsKey('filename')) {
-      meta['filename'] = path.basename(file.path);
+      meta['filename'] = p.basename(file.path);
     }
 
     return meta.entries.map((entry) => '${entry.key} ${base64.encode(utf8.encode(entry.value))}').join(',');

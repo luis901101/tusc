@@ -11,9 +11,6 @@ extension IntExtension on int {
   
   /// Number in Giga Bytes
   int get GB => MB * 1024;
-  
-  /// Number in Tera Bytes
-  int get TB => GB * 1024;
-  
+
   //No need to create others
 }

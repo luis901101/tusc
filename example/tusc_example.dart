@@ -16,13 +16,13 @@ void main() async {
     url: uploadURL, /// Required
     file: file, /// Required
     chunkSize: 5.MB, /// Optional, defaults to 256 KB
-    tusVersion: TusClient.defaultTusVersion, /// Optional, defaults to 1.0.0
-    store: TusPersistentStore('/some/path'), /// Optional, defaults to TusMemoryStore()
+    tusVersion: TusClient.defaultTusVersion, /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
+    cache: TusPersistentCache('/some/path'), /// Optional, defaults to null. See also [TusMemoryCache]
     headers: <String, dynamic>{ /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
-      HttpHeaders.authorizationHeader: 'Bearer d843udhq3fkjasdnflkjasdf'
+      HttpHeaders.authorizationHeader: 'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig'
     },
     metadata: <String, dynamic>{ /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
-      HttpHeaders.authorizationHeader: 'Bearer d843udhq3fkjasdnflkjasdf'
+      'name': 'my-video'
     },
     timeout: Duration(seconds: 10), /// Optional, defaults to 30 seconds
     httpClient: http.Client(), /// Optional, defaults to http.Client(), use it when you need more control over http requests

@@ -30,7 +30,7 @@ void main() {
         url: uploadURL,
         chunkSize: 5.KB,
         file: XFile(imageFile.path),
-        store: TusMemoryStore(),
+        cache: TusMemoryCache(),
       );
       bool isComplete = false;
       onProgress(int count, int total, Response? response) {
@@ -79,7 +79,7 @@ void main() {
         url: uploadURL,
         chunkSize: 20.KB,
         file: XFile(videoFile.path),
-        store: TusPersistentStore(''),
+        cache: TusPersistentCache(''),
       );
       bool isComplete = false;
       onProgress(int count, int total, Response? response) {
