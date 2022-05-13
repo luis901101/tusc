@@ -1,8 +1,6 @@
-/// Support for doing something awesome.
-///
-/// More dartdocs go here.
 library tusc;
 
-export 'src/tusc_base.dart';
+export 'package:tusc/src/client.dart';
+export 'package:tusc/src/exceptions.dart';
+export 'package:tusc/src/store.dart';
 
-// TODO: Export any libraries intended for clients of this package.
