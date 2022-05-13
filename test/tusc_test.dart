@@ -9,7 +9,7 @@ import 'package:path/path.dart' as p;
 ///
 /// Make sure to set these environment variables before running tests.
 ///
-/// export UPLOAD_URL=https://master.tus.io/files/
+/// export UPLOAD_URL=https://master.tus.io/files
 /// export IMAGE_FILE=/Users/user/Desktop/image-test.jpg
 /// export VIDEO_FILE=/Users/user/Desktop/video-test.mp4
 ///
@@ -18,7 +18,7 @@ String headersPrettyPrint(Map<String, String> headers) =>
   headers.entries.map((e) => '${e.key}: ${e.value}').join('\n');
 
 void main() {
-  final String uploadURL = Platform.environment['UPLOAD_URL'] ?? 'https://master.tus.io/files/';
+  final String uploadURL = Platform.environment['UPLOAD_URL'] ?? 'https://master.tus.io/files';
   final imageFile = File(Platform.environment['IMAGE_FILE'] ?? ''),
       videoFile = File(Platform.environment['VIDEO_FILE'] ?? '');
 
@@ -28,7 +28,7 @@ void main() {
       if (!imageFile.existsSync()) fail('No image file available to upload');
       final tusClient = TusClient(
         url: uploadURL,
-        chunkSize: 5 * 1024, //5 KB
+        chunkSize: 5.KB,
         file: XFile(imageFile.path),
         store: TusMemoryStore(),
       );
@@ -52,6 +52,7 @@ void main() {
             print('--------------------------------------------------------------');
             print('--------------------------------------------------------------');
             print('------------------------Upload completed----------------------');
+            print(tusClient.uploadUrl);
             print('--------------------------------------------------------------');
             print('--------------------------------------------------------------');
             print('--------------------------------------------------------------');
@@ -76,7 +77,7 @@ void main() {
       if (!videoFile.existsSync()) fail('No video file available to upload');
       final tusClient = TusClient(
         url: uploadURL,
-        chunkSize: 20 * 1024, //20 KB
+        chunkSize: 20.KB,
         file: XFile(videoFile.path),
         store: TusPersistentStore(''),
       );
@@ -99,13 +100,14 @@ void main() {
           print('--------------------------------------------------------------');
           print('--------------------------------------------------------------');
           print('------------------------Upload completed----------------------');
+          print(tusClient.uploadUrl);
           print('--------------------------------------------------------------');
           print('--------------------------------------------------------------');
           print('--------------------------------------------------------------');
           isComplete = true;
           testProgressCallback(0, 0, null);
         },
-        onTimeoutCallback: () {
+        onTimeout: () {
           print('Request timeout');
         }
       );

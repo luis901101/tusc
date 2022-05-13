@@ -7,6 +7,7 @@ import 'dart:typed_data' show Uint8List, BytesBuilder;
 import 'package:tusc/src/exceptions.dart';
 import 'package:tusc/src/store.dart';
 import 'package:tusc/src/utils/map_utils.dart';
+import 'package:tusc/src/utils/num_utils.dart';
 import 'package:cross_file/cross_file.dart' show XFile;
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
@@ -77,14 +78,15 @@ class TusClient {
   TusClient({
     required this.url,
     required this.file,
+    int? chunkSize,
     this.tusVersion = defaultTusVersion,
     this.store,
     Map<String, dynamic>? headers,
     this.metadata,
-    this.chunkSize = 256 * 1024,
     Duration? timeout,
     http.Client? httpClient,
   }) :
+      chunkSize = chunkSize ?? 256.KB,
       headers = headers?.parseToMapString ?? {},
       timeout = timeout ?? const Duration(seconds: 30),
       httpClient = httpClient ?? http.Client() {
@@ -146,13 +148,24 @@ class TusClient {
   /// Starts or resumes an upload in chunks of [chunkSize].
   /// Throws [ProtocolException] on server error.
   Future<void> startUpload({
+    /// Callback to notify about the upload progress. It provides [count] which
+    /// is the amount of data already uploaded, [total] the amount of data to be
+    /// uploaded and [response] which is the http response of the last
+    /// [chunkSize] uploaded.
     ProgressCallback? onProgress,
+
+    /// Callback to notify the upload has completed. It provides a [response]
+    /// which is the http response of the last [chunkSize] uploaded.
     CompleteCallback? onComplete,
-    Function()? onTimeoutCallback,
+
+    /// Callback to notify the upload timed out according to the [timeout]
+    /// property specified in the [TusClient] constructor which by default is
+    /// 30 seconds
+    Function()? onTimeout,
   }) async {
     _onProgress = onProgress;
     _onComplete = onComplete;
-    _onTimeoutCallback = onTimeoutCallback;
+    _onTimeoutCallback = onTimeout;
 
     if (!await canResume()) {
       await _createUpload();
@@ -182,7 +195,7 @@ class TusClient {
         body: await _getData(),
       );
       response = await _uploadFuture?.timeout(timeout, onTimeout: () {
-        onTimeoutCallback?.call();
+        onTimeout?.call();
         return http.Response('', HttpStatus.requestTimeout,
             reasonPhrase: 'Request timeout');
       });
@@ -221,7 +234,7 @@ class TusClient {
   Future<void> resumeUpload() => startUpload(
     onProgress: _onProgress,
     onComplete: _onComplete,
-    onTimeoutCallback: _onTimeoutCallback,
+    onTimeout: _onTimeoutCallback,
   );
 
   /// Pause the current upload

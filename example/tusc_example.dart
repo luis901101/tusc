@@ -1,6 +1,58 @@
-import 'package:tusc/tusc.dart';
+import 'dart:io';
 
-void main() {
-  var awesome = Awesome();
-  print('awesome: ${awesome.isAwesome}');
+import 'package:tusc/tusc.dart';
+import 'package:cross_file/cross_file.dart' show XFile;
+import 'package:http/http.dart' as http;
+
+
+void main() async {
+
+  /// File to be uploaded
+  final file = XFile('/path/to/some/video.mp4');
+  final uploadURL = 'https://master.tus.io/files';
+
+  /// Create a client
+  final tusClient = TusClient(
+    url: uploadURL, /// Required
+    file: file, /// Required
+    chunkSize: 5.MB, /// Optional, defaults to 256 KB
+    tusVersion: TusClient.defaultTusVersion, /// Optional, defaults to 1.0.0
+    store: TusPersistentStore('/some/path'), /// Optional, defaults to TusMemoryStore()
+    headers: <String, dynamic>{ /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
+      HttpHeaders.authorizationHeader: 'Bearer d843udhq3fkjasdnflkjasdf'
+    },
+    metadata: <String, dynamic>{ /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
+      HttpHeaders.authorizationHeader: 'Bearer d843udhq3fkjasdnflkjasdf'
+    },
+    timeout: Duration(seconds: 10), /// Optional, defaults to 30 seconds
+    httpClient: http.Client(), /// Optional, defaults to http.Client(), use it when you need more control over http requests
+  );
+
+  /// Starts the upload
+  tusClient.startUpload(
+    /// count: the amount of data already uploaded
+    /// total: the amount of data to be uploaded
+    /// response: the http response of the last chunkSize uploaded
+    onProgress: (count, total, progress) {
+      print('Progress: $count of $total | ${(count/total * 100).toInt()}%');
+    },
+
+    /// response: the http response of the last chunkSize uploaded
+    onComplete: (response) {
+      print('Upload Completed');
+      print(tusClient.uploadUrl.toString());
+    },
+
+    onTimeout: () {
+      print('Upload timed out');
+    }
+  );
+
+  await Future.delayed(const Duration(seconds: 6), () async {
+    await tusClient.pauseUpload(); /// Pauses the upload progress
+  });
+
+  await Future.delayed(const Duration(seconds: 8), () async {
+    tusClient.resumeUpload(); /// Resumes the upload progress where it left of, and notify to the same callbacks used in the startUpload(...)
+  });
 }
