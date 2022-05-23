@@ -9,8 +9,15 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## 1.1.0+2
+### Added
+- `TusUploadState` enum added to control the state of the tus upload
+- `tusclient.state` to get the current upload state
+- `tusclient.errorMessage` to get the last error message
+- `cancelUpload` function added to `TusClient`
+
 ## 1.0.0+1
-### CHanged
+### Changed
 - README.md updated
 
 ## 1.0.0

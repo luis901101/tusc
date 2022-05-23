@@ -63,12 +63,21 @@ void main() async {
 
   await Future.delayed(const Duration(seconds: 6), () async {
     await tusClient.pauseUpload();
+    print(tusClient.state);
 
     /// Pauses the upload progress
   });
 
+  await Future.delayed(const Duration(seconds: 6), () async {
+    await tusClient.cancelUpload();
+    print(tusClient.state);
+
+    /// Cancels the upload progress
+  });
+
   await Future.delayed(const Duration(seconds: 8), () async {
     tusClient.resumeUpload();
+    print(tusClient.state);
 
     /// Resumes the upload progress where it left of, and notify to the same callbacks used in the startUpload(...)
   });

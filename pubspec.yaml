@@ -1,6 +1,6 @@
 name: tusc
 description: A tus client for dart to allow resumable uploads using the tus protocol (https://tus.io/).
-version: 1.0.0+1
+version: 1.1.0+2
 homepage: https://github.com/luis901101/tusc
 
 environment:

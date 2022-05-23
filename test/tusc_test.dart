@@ -51,6 +51,7 @@ void main() {
         await tusClient.startUpload(
             onProgress: testProgressCallback,
             onComplete: (response) {
+              expect(tusClient.state, TusUploadState.completed);
               print(
                   'Response headers: ${headersPrettyPrint(response.headers)}');
               print(
@@ -107,33 +108,48 @@ void main() {
       final testProgressCallback =
           expectAsyncUntil3(onProgress, () => isComplete);
       tusClient.startUpload(
-          onProgress: testProgressCallback,
-          onComplete: (response) {
-            print('Response headers: ${headersPrettyPrint(response.headers)}');
-            print(
-                '--------------------------------------------------------------');
-            print(
-                '--------------------------------------------------------------');
-            print(
-                '--------------------------------------------------------------');
-            print(
-                '------------------------Upload completed----------------------');
-            print(tusClient.uploadUrl);
-            print(
-                '--------------------------------------------------------------');
-            print(
-                '--------------------------------------------------------------');
-            print(
-                '--------------------------------------------------------------');
-            isComplete = true;
-            testProgressCallback(0, 0, null);
-          },
-          onTimeout: () {
-            print('Request timeout');
-          });
+        onProgress: testProgressCallback,
+        onComplete: (response) {
+          print('Response headers: ${headersPrettyPrint(response.headers)}');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '------------------------Upload completed----------------------');
+          print(tusClient.uploadUrl);
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+          isComplete = true;
+          testProgressCallback(0, 0, null);
+        },
+        onTimeout: () {
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '------------------------Upload request timeout----------------');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+          print(
+              '--------------------------------------------------------------');
+        },
+      );
 
       await Future.delayed(const Duration(seconds: 6), () async {
         await tusClient.pauseUpload();
+        expect(tusClient.state, TusUploadState.paused);
         print('--------------------------------------------------------------');
         print('--------------------------------------------------------------');
         print('--------------------------------------------------------------');
@@ -145,6 +161,7 @@ void main() {
 
       await Future.delayed(const Duration(seconds: 8), () async {
         tusClient.resumeUpload();
+        expect(tusClient.state, TusUploadState.uploading);
         print('--------------------------------------------------------------');
         print('--------------------------------------------------------------');
         print('--------------------------------------------------------------');
@@ -153,6 +170,30 @@ void main() {
         print('--------------------------------------------------------------');
         print('--------------------------------------------------------------');
       });
-    }, timeout: Timeout(Duration(minutes: 1)));
+
+      await Future.delayed(const Duration(seconds: 12), () async {
+        tusClient.cancelUpload();
+        expect(tusClient.state, TusUploadState.uploading);
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('------------------------Upload cancelled----------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+      });
+
+      await Future.delayed(const Duration(seconds: 14), () async {
+        tusClient.resumeUpload();
+        expect(tusClient.state, TusUploadState.uploading);
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('------------------------Upload restarted----------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+      });
+    }, timeout: Timeout(Duration(minutes: 10)));
   });
 }
