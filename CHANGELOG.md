@@ -9,6 +9,10 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## 1.1.0+3
+### Changed
+- Updated `http` package version to `'>=0.13.0 <2.0.0'` for better compatibility.
+
 ## 1.1.0+2
 ### Added
 - `TusUploadState` enum added to control the state of the tus upload
