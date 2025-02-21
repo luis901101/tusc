@@ -22,6 +22,9 @@ typedef ProgressCallback = void Function(
 /// Callback to listen when upload finishes
 typedef CompleteCallback = void Function(http.Response response);
 
+/// Callback to listen when upload fails
+typedef ErrorCallback = void Function(ProtocolException error);
+
 /// This is a client for the tus(https://tus.io) protocol.
 class TusClient {
   /// Version of the tus protocol used by the client. The remote server needs to
@@ -74,6 +77,7 @@ class TusClient {
   Future? _uploadFuture;
   ProgressCallback? _onProgress;
   CompleteCallback? _onComplete;
+  ErrorCallback? _onError;
   Function()? _onTimeout;
   String? _errorMessage;
 
@@ -160,88 +164,103 @@ class TusClient {
     return _uploadURI.toString().isNotEmpty;
   }
 
-  Future<void> _upload() async {
-    _errorMessage = null;
-    if (!await canResume()) {
-      await _createUpload();
+  void _notifyError(ProtocolException error) {
+    if (_onError != null) {
+      _onError!(error);
+    } else {
+      throw error;
     }
+  }
 
-    // Get offset from server
-    _offset = await _getOffset();
+  Future<void> _upload() async {
+    try {
+      _errorMessage = null;
+      if (!await canResume()) {
+        await _createUpload();
+      }
 
-    http.Response? response;
+      // Get offset from server
+      _offset = await _getOffset();
 
-    final uploadHeaders = {
-      ...headers,
-      tusResumableHeader: tusVersion,
-      uploadOffsetHeader: '$_offset',
-      HttpHeaders.contentTypeHeader: contentTypeOffsetOctetStream
-    };
+      http.Response? response;
 
-    // Start upload
-    _state = TusUploadState.uploading;
-    while ((_state != TusUploadState.paused &&
-            _state != TusUploadState.completed &&
-            _state != TusUploadState.cancelled) &&
-        _offset < _fileSize) {
+      final uploadHeaders = {
+        ...headers,
+        tusResumableHeader: tusVersion,
+        uploadOffsetHeader: '$_offset',
+        HttpHeaders.contentTypeHeader: contentTypeOffsetOctetStream
+      };
+
+      // Start upload
       _state = TusUploadState.uploading;
+      while ((_state != TusUploadState.paused &&
+              _state != TusUploadState.completed &&
+              _state != TusUploadState.cancelled) &&
+          _offset < _fileSize) {
+        _state = TusUploadState.uploading;
+        // Update upload progress
+        _onProgress?.call(_offset, _fileSize, response);
+
+        uploadHeaders[uploadOffsetHeader] = '$_offset';
+
+        _uploadFuture = httpClient.patch(
+          _uploadURI,
+          headers: uploadHeaders,
+          body: await _getData(),
+        );
+        response = await _uploadFuture?.timeout(timeout, onTimeout: () {
+          _onTimeout?.call();
+          _state = TusUploadState.error;
+          return http.Response('', HttpStatus.requestTimeout,
+              reasonPhrase: _errorMessage = 'Request timeout');
+        });
+        _uploadFuture = null;
+
+        // Check if correctly uploaded
+        if (!(response!.statusCode >= 200 && response.statusCode < 300)) {
+          _state = TusUploadState.error;
+          throw ProtocolException(
+              _errorMessage =
+                  'Unexpected status code (${response.statusCode}) while uploading chunk',
+              response);
+        }
+
+        int? serverOffset = _parseOffset(response.headers[uploadOffsetHeader]);
+        if (serverOffset == null) {
+          _state = TusUploadState.error;
+          throw ProtocolException(
+              _errorMessage =
+                  'Response to PATCH request contains no or invalid Upload-Offset header',
+              response);
+        }
+        if (_offset != serverOffset) {
+          _state = TusUploadState.error;
+          throw ProtocolException(
+              _errorMessage =
+                  'Response contains different Upload-Offset value ($serverOffset) than expected ($_offset)',
+              response);
+        }
+      }
+
       // Update upload progress
       _onProgress?.call(_offset, _fileSize, response);
 
-      uploadHeaders[uploadOffsetHeader] = '$_offset';
-
-      _uploadFuture = httpClient.patch(
-        _uploadURI,
-        headers: uploadHeaders,
-        body: await _getData(),
-      );
-      response = await _uploadFuture?.timeout(timeout, onTimeout: () {
-        _onTimeout?.call();
-        _state = TusUploadState.error;
-        return http.Response('', HttpStatus.requestTimeout,
-            reasonPhrase: _errorMessage = 'Request timeout');
-      });
-      _uploadFuture = null;
-
-      // Check if correctly uploaded
-      if (!(response!.statusCode >= 200 && response.statusCode < 300)) {
-        _state = TusUploadState.error;
-        throw ProtocolException(
-            _errorMessage =
-                'Unexpected status code (${response.statusCode}) while uploading chunk',
-            response);
+      if (_offset == _fileSize) {
+        // Upload completed
+        _state = TusUploadState.completed;
+        cache?.remove(_fingerprint);
+        _onComplete?.call(response!);
       }
-
-      int? serverOffset = _parseOffset(response.headers[uploadOffsetHeader]);
-      if (serverOffset == null) {
-        _state = TusUploadState.error;
-        throw ProtocolException(
-            _errorMessage =
-                'Response to PATCH request contains no or invalid Upload-Offset header',
-            response);
-      }
-      if (_offset != serverOffset) {
-        _state = TusUploadState.error;
-        throw ProtocolException(
-            _errorMessage =
-                'Response contains different Upload-Offset value ($serverOffset) than expected ($_offset)',
-            response);
-      }
-    }
-
-    // Update upload progress
-    _onProgress?.call(_offset, _fileSize, response);
-
-    if (_offset == _fileSize) {
-      // Upload completed
-      _state = TusUploadState.completed;
-      cache?.remove(_fingerprint);
-      _onComplete?.call(response!);
+    } on ProtocolException catch (e) {
+      _notifyError(e);
+    } catch (e) {
+      rethrow;
     }
   }
 
   /// Starts or resumes an upload in chunks of [chunkSize].
-  /// Throws [ProtocolException] on server error.
+  /// If [onError] is specified all errors will be notified through the callback
+  /// otherwise it will throw a [ProtocolException] on server error.
   Future<void> startUpload({
     /// Callback to notify about the upload progress. It provides [count] which
     /// is the amount of data already uploaded, [total] the amount of data to be
@@ -253,6 +272,11 @@ class TusClient {
     /// which is the http response of the last [chunkSize] uploaded.
     CompleteCallback? onComplete,
 
+    /// Callback to notify the upload has failed. It provides an [error]
+    /// which is a [ProtocolException] with a [message] description and the
+    /// http [response] from the failed request.
+    ErrorCallback? onError,
+
     /// Callback to notify the upload timed out according to the [timeout]
     /// property specified in the [TusClient] constructor which by default is
     /// 30 seconds
@@ -260,6 +284,7 @@ class TusClient {
   }) async {
     _onProgress = onProgress;
     _onComplete = onComplete;
+    _onError = onError;
     _onTimeout = onTimeout;
     _state = TusUploadState.uploading;
     return _upload();

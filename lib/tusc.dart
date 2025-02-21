@@ -1,4 +1,4 @@
-library tusc;
+library;
 
 export 'package:tusc/src/utils/num_utils.dart';
 export 'package:tusc/src/client.dart';

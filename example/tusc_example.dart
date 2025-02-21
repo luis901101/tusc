@@ -45,21 +45,29 @@ void main() async {
 
   /// Starts the upload
   tusClient.startUpload(
+    /// count: the amount of data already uploaded
+    /// total: the amount of data to be uploaded
+    /// response: the http response of the last chunkSize uploaded
+    onProgress: (count, total, progress) {
+      print('Progress: $count of $total | ${(count / total * 100).toInt()}%');
+    },
 
-      /// count: the amount of data already uploaded
-      /// total: the amount of data to be uploaded
-      /// response: the http response of the last chunkSize uploaded
-      onProgress: (count, total, progress) {
-    print('Progress: $count of $total | ${(count / total * 100).toInt()}%');
-  },
-
-      /// response: the http response of the last chunkSize uploaded
-      onComplete: (response) {
-    print('Upload Completed');
-    print(tusClient.uploadUrl.toString());
-  }, onTimeout: () {
-    print('Upload timed out');
-  });
+    /// response: the http response of the last chunkSize uploaded
+    onComplete: (response) {
+      print('Upload Completed');
+      print(tusClient.uploadUrl.toString());
+    },
+    onTimeout: () {
+      print('Upload timed out');
+    },
+    onError: (e) {
+      print('Error message: ${e.message}');
+      print('Response status code: ${e.response.statusCode}');
+      print('Response status reasonPhrase: ${e.response.reasonPhrase}');
+      print('Response body: ${e.response.body}');
+      print('Response headers: ${e.response.headers}');
+    },
+  );
 
   await Future.delayed(const Duration(seconds: 6), () async {
     await tusClient.pauseUpload();

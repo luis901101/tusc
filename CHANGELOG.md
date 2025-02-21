@@ -9,6 +9,10 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## 1.2.0
+### Added
+- Added `onError` callback to `startUpload()` function to allow getting errors through callback instead of thrown exceptions 
+
 ## 1.1.0+3
 ### Changed
 - Updated `http` package version to `'>=0.13.0 <2.0.0'` for better compatibility.

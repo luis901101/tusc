@@ -34,7 +34,7 @@ void main() {
         cache: TusMemoryCache(),
       );
       bool isComplete = false;
-      onProgress(int count, int total, Response? response) {
+      void onProgress(int count, int total, Response? response) {
         if (isComplete) return;
         print(
             'tus image upload from file: ${p.basename(imageFile.path)} progress: $count/$total ${(count / total * 100).toInt()}%');
@@ -89,12 +89,12 @@ void main() {
       if (!videoFile.existsSync()) fail('No video file available to upload');
       final tusClient = TusClient(
         url: uploadURL,
-        chunkSize: 20.KB,
+        chunkSize: 256.KB,
         file: XFile(videoFile.path),
         cache: TusPersistentCache(''),
       );
       bool isComplete = false;
-      onProgress(int count, int total, Response? response) {
+      void onProgress(int count, int total, Response? response) {
         if (isComplete) return;
         print(
             'tus video upload from file: ${p.basename(videoFile.path)} progress: $count/$total ${(count / total * 100).toInt()}%');
@@ -147,7 +147,7 @@ void main() {
         },
       );
 
-      await Future.delayed(const Duration(seconds: 6), () async {
+      await Future.delayed(const Duration(seconds: 3), () async {
         await tusClient.pauseUpload();
         expect(tusClient.state, TusUploadState.paused);
         print('--------------------------------------------------------------');
@@ -159,7 +159,7 @@ void main() {
         print('--------------------------------------------------------------');
       });
 
-      await Future.delayed(const Duration(seconds: 8), () async {
+      await Future.delayed(const Duration(seconds: 6), () async {
         tusClient.resumeUpload();
         expect(tusClient.state, TusUploadState.uploading);
         print('--------------------------------------------------------------');
@@ -171,7 +171,7 @@ void main() {
         print('--------------------------------------------------------------');
       });
 
-      await Future.delayed(const Duration(seconds: 12), () async {
+      await Future.delayed(const Duration(seconds: 10), () async {
         tusClient.cancelUpload();
         expect(tusClient.state, TusUploadState.uploading);
         print('--------------------------------------------------------------');

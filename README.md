@@ -131,6 +131,7 @@ When you call `tusClient.startUpload(...)` you optionally can set some callbacks
 - `onProgress: (count, total, progress)`: This callback notifies about the upload progress. It provides `count` which is the amount of data already uploaded, `total` the amount of data to be uploaded and `response` which is the http response of the last `chunkSize` uploaded. With this response you can check for headers or body in case your tus server returns some info there.
 - `onComplete: (response)`: This callback notifies the upload has completed. It provides a `response` which is the http response of the last `chunkSize` uploaded. With this response you can check for headers or body in case your tus server returns some info there.
 - `onTimeout: ()`: This callback notifies the upload timed out according to the `timeout` property specified in the `TusClient` constructor which by default is 30 seconds.
+- `onError: (error)`: This callback notifies the upload has failed. It provides an `error` which is a `ProtocolException` with a `message` description and the http `response` from the failed request. If this callback is omitted then the `startUpload` will throw `ProtocolException` on failure.   
   
 ### Cache
 For `TusClient` to manage `pause/resume` uploads you can set a `cache` by using:
