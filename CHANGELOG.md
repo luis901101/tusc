@@ -9,6 +9,10 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## 2.0.0
+### Changed
+- Changed `hive` dependency to `hive_ce`.
+
 ## 1.2.0
 ### Added
 - Added `onError` callback to `startUpload()` function to allow getting errors through callback instead of thrown exceptions 
