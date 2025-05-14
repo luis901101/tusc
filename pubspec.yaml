@@ -11,6 +11,7 @@ dependencies:
   cross_file: ^0.3.3
   hive_ce: ^2.11.1
   path: ^1.0.0
+  crypto: ^3.0.6
 
 dev_dependencies:
   lints: ^5.1.1
