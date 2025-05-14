@@ -1,6 +1,9 @@
+import 'dart:convert' show utf8;
+
 import 'package:tusc/src/utils/platform_utils.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:path/path.dart' as p;
+import 'package:crypto/crypto.dart';
 
 /// Implementations of this interface are used to lookup a
 /// [fingerprint] with the corresponding [url].
@@ -29,17 +32,20 @@ class TusMemoryCache implements TusCache {
 
   @override
   Future<void> set(String fingerprint, String url) async {
-    _cache[fingerprint] = url;
+    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
+    _cache[hashedFingerprint] = url;
   }
 
   @override
   Future<String?> get(String fingerprint) async {
-    return _cache[fingerprint];
+    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
+    return _cache[hashedFingerprint];
   }
 
   @override
   Future<void> remove(String fingerprint) async {
-    _cache.remove(fingerprint);
+    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
+    _cache.remove(hashedFingerprint);
   }
 }
 
@@ -72,22 +78,29 @@ class TusPersistentCache implements TusCache {
   /// Cache a new [fingerprint] and its upload [url].
   @override
   Future<void> set(String fingerprint, String url) async {
+    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
     await _openBox();
-    _box.put(fingerprint, url);
+    _box.put(hashedFingerprint, url);
   }
 
   /// Retrieve an upload URL for a [fingerprint].
   /// If no matching entry is found this method will return `null`.
   @override
   Future<String?> get(String fingerprint) async {
+    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
     await _openBox();
-    return _box.get(fingerprint);
+    return _box.get(hashedFingerprint);
   }
 
   /// Remove an entry from the cache using an upload [fingerprint].
   @override
   Future<void> remove(String fingerprint) async {
+    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
     await _openBox();
-    _box.delete(fingerprint);
+    _box.delete(hashedFingerprint);
   }
+}
+
+String _hashKeyWithSha1(String fingerprint) {
+  return sha1.convert(utf8.encode(fingerprint)).toString(); // 40 karakterlik sabit çıktı
 }
