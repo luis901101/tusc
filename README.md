@@ -46,6 +46,10 @@ void main() async {
   handleClient(tusClient);
 
   /// Initialize a TusStreamClient instance from a Stream generator function
+  /// This is useful when you want to upload a file from a stream.
+  /// The only difference is that this client doesn't rely on a file but rather
+  /// on a stream of bytes. It's intended for cases where the file is excessively
+  /// large.
   final tusStreamClient = await initTusStreamClient(file, uploadURL);
   handleClient(tusStreamClient);
 }
