@@ -10,6 +10,9 @@ Types of changes
 - `Security` in case of vulnerabilities.
 
 ## 2.1.0
+### Added
+- Added `TusStreamClient` to support stream uploads.
+
 ### Changed
 - Removed usage of `dart:io` to allow support for web.
 

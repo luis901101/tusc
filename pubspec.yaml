@@ -8,9 +8,9 @@ environment:
 
 dependencies:
   http: '>=0.13.0 <2.0.0'
-  cross_file: ^0.3.3
-  hive_ce: ^2.11.1
-  path: ^1.0.0
+  cross_file: ^0.3.4+2
+  hive_ce: ^2.11.3
+  path: ^1.9.1
   crypto: ^3.0.6
 
 dev_dependencies:

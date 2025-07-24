@@ -32,8 +32,6 @@ Finally you just have to run:
 ## Usage
 
 ```dart
-import 'dart:io';
-
 import 'package:tusc/tusc.dart';
 import 'package:cross_file/cross_file.dart' show XFile;
 import 'package:http/http.dart' as http;
@@ -43,73 +41,115 @@ void main() async {
   final file = XFile('/path/to/some/video.mp4');
   final uploadURL = 'https://master.tus.io/files';
 
-  /// Create a client
-  final tusClient = TusClient(
-    url: uploadURL,
+  /// Initialize a TusClient instance from a XFile
+  final tusClient = initTusClient(file, uploadURL);
+  handleClient(tusClient);
 
-    /// Required
-    file: file,
+  /// Initialize a TusStreamClient instance from a Stream generator function
+  final tusStreamClient = await initTusStreamClient(file, uploadURL);
+  handleClient(tusStreamClient);
+}
 
-    /// Required
-    chunkSize: 5.MB,
+TusBaseClient initTusClient(XFile file, String uploadURL) => TusClient(
+  /// Required
+  url: uploadURL,
+  /// Required
+  file: file,
+  /// Optional, defaults to 256 KB
+  chunkSize: 5.MB,
+  /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
+  tusVersion: Headers.defaultTusVersion,
+  /// Optional, defaults to null. See also [TusMemoryCache]
+  cache: TusPersistentCache('/some/path'),
+  /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
+  headers: <String, dynamic>{
+    'Authorization':
+    'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig',
+  },
+  /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
+  metadata: <String, dynamic>{
+    'name': 'my-video',
+  },
+  /// Optional, defaults to 30 seconds
+  timeout: Duration(seconds: 10),
+  /// Optional, defaults to http.Client(), use it when you need more control over http requests
+  httpClient: http.Client(),
+);
 
-    /// Optional, defaults to 256 KB
-    tusVersion: TusClient.defaultTusVersion,
+Future<TusBaseClient> initTusStreamClient(XFile file, String uploadURL) async => TusStreamClient(
+  /// Required
+  url: uploadURL,
+  /// Required
+  fileStreamGenerator: () => file.openRead(),
+  /// Required
+  fileSize: await file.length(),
+  /// Required
+  fileName: file.name,
+  /// Optional, defaults to 256 KB
+  chunkSize: 5.MB,
+  /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
+  tusVersion: Headers.defaultTusVersion,
+  /// Optional, defaults to null. See also [TusMemoryCache]
+  cache: TusPersistentCache('/some/path'),
+  /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
+  headers: <String, dynamic>{
+    'Authorization':
+    'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig',
+  },
+  /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
+  metadata: <String, dynamic>{
+    'name': 'my-video',
+  },
+  /// Optional, defaults to 30 seconds
+  timeout: Duration(seconds: 10),
+  /// Optional, defaults to http.Client(), use it when you need more control over http requests
+  httpClient: http.Client(),
+);
 
-    /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
-    cache: TusPersistentCache('/some/path'),
-
-    /// Optional, defaults to null. See also [TusMemoryCache]
-    headers: <String, dynamic>{
-      /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
-      HttpHeaders.authorizationHeader:
-      'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig'
-    },
-    metadata: <String, dynamic>{
-      /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
-      'name': 'my-video'
-    },
-    timeout: Duration(seconds: 10),
-
-    /// Optional, defaults to 30 seconds
-    httpClient: http.Client(),
-
-    /// Optional, defaults to http.Client(), use it when you need more control over http requests
-  );
-
+void handleClient(TusBaseClient tusClient) {
   /// Starts the upload
   tusClient.startUpload(
+
     /// count: the amount of data already uploaded
     /// total: the amount of data to be uploaded
     /// response: the http response of the last chunkSize uploaded
-      onProgress: (count, total, progress) {
-        print('Progress: $count of $total | ${(count / total * 100).toInt()}%');
-      },
+    onProgress: (count, total, progress) {
+      print('Progress: $count of $total | ${(count / total * 100).toInt()}%');
+    },
 
-      /// response: the http response of the last chunkSize uploaded
-      onComplete: (response) {
-        print('Upload Completed');
-        print(tusClient.uploadUrl.toString());
-      }, onTimeout: () {
-    print('Upload timed out');
-  });
+    /// response: the http response of the last chunkSize uploaded
+    onComplete: (response) {
+      print('Upload Completed');
+      print(tusClient.uploadUrl.toString());
+    },
+    onTimeout: () {
+      print('Upload timed out');
+    },
+    onError: (e) {
+      print('Error message: ${e.message}');
+      print('Response status code: ${e.response.statusCode}');
+      print('Response status reasonPhrase: ${e.response.reasonPhrase}');
+      print('Response body: ${e.response.body}');
+      print('Response headers: ${e.response.headers}');
+    },
+  );
 
-  await Future.delayed(const Duration(seconds: 6), () async {
+  Future.delayed(const Duration(seconds: 6), () async {
+    /// Pauses the upload progress
     await tusClient.pauseUpload();
     print(tusClient.state);
-    /// Pauses the upload progress
   });
 
-  await Future.delayed(const Duration(seconds: 6), () async {
+  Future.delayed(const Duration(seconds: 6), () async {
+    /// Cancels the upload progress
     await tusClient.cancelUpload();
     print(tusClient.state);
-    /// Cancels the upload progress
   });
 
-  await Future.delayed(const Duration(seconds: 8), () async {
+  Future.delayed(const Duration(seconds: 8), () async {
+    /// Resumes the upload progress where it left of, and notify to the same callbacks used in the startUpload(...)
     tusClient.resumeUpload();
     print(tusClient.state);
-    /// Resumes the upload progress where it left of, and notify to the same callbacks used in the startUpload(...)
   });
 }
 ```
@@ -162,17 +202,11 @@ You can use [path_provider](https://pub.dev/packages/path_provider) plugin to be
 The following sample code works on any platform.
 ```dart
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
 Future<void> sample() async {
-  Directory dir = Directory.systemTemp;
-  try {
-    /// Here the try/catch is to handle [MissingPlatformDirectoryException] throws from path_provider in case of app running on unsupported platform, like web.
-    /// You can handle this differently, for instance asking to kIsWeb, but this is just a sample
-    dir = await getApplicationDocumentsDirectory();
-  } catch (e) {
-    print(e);
-  }
+  Directory dir = kIsWeb ? Directory.systemTemp : await getApplicationDocumentsDirectory();
 
   final tusClient = TusClient(
     uploadURL,
