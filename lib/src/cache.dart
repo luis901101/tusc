@@ -65,7 +65,7 @@ class TusPersistentCache implements TusCache {
 
   Future<void> _initHive() async {
     final cachePath = p.join(path, 'tus');
-    if (!PlatformUtils.isWeb) Hive.init(cachePath);
+    if (!isWeb) Hive.init(cachePath);
     _isHiveInitialized = true;
   }
 

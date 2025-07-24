@@ -16,10 +16,10 @@ extension MapExtension<K, V> on Map<K, V> {
   }
 
   Map<String, String> get parseToMapString => mapWhere(
-    (key, value) => MapEntry<String, String>(
-      key is String ? key : jsonEncode(key),
-      value is String ? value : jsonEncode(value),
-    ),
-    (key, value) => key != null && value != null,
-  );
+        (key, value) => MapEntry<String, String>(
+          key is String ? key : jsonEncode(key),
+          value is String ? value : jsonEncode(value),
+        ),
+        (key, value) => key != null && value != null,
+      );
 }

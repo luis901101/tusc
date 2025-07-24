@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:convert' show base64, utf8;
 import 'dart:math' show min;
 import 'dart:typed_data' show Uint8List, BytesBuilder;
@@ -7,6 +6,8 @@ import 'dart:typed_data' show Uint8List, BytesBuilder;
 import 'package:tusc/src/exceptions.dart';
 import 'package:tusc/src/cache.dart';
 import 'package:tusc/src/tus_upload_state.dart';
+import 'package:tusc/src/utils/header_utils.dart';
+import 'package:tusc/src/utils/http_status.dart';
 import 'package:tusc/src/utils/map_utils.dart';
 import 'package:tusc/src/utils/num_utils.dart';
 import 'package:cross_file/cross_file.dart' show XFile;
@@ -16,8 +17,8 @@ import 'package:path/path.dart' as p;
 /// Callback to listen the progress for sending data.
 /// [count] the length of the bytes that have been sent.
 /// [total] the content length.
-typedef ProgressCallback =
-    void Function(int count, int total, http.Response? response);
+typedef ProgressCallback = void Function(
+    int count, int total, http.Response? response);
 
 /// Callback to listen when upload finishes
 typedef CompleteCallback = void Function(http.Response response);
@@ -27,16 +28,6 @@ typedef ErrorCallback = void Function(ProtocolException error);
 
 /// This is a client for the tus(https://tus.io) protocol.
 class TusClient {
-  /// Version of the tus protocol used by the client. The remote server needs to
-  /// support this version, too.
-  static const defaultTusVersion = '1.0.0';
-  static const contentTypeOffsetOctetStream = 'application/offset+octet-stream';
-
-  static const tusResumableHeader = 'tus-resumable';
-  static const uploadMetadataHeader = 'upload-metadata';
-  static const uploadOffsetHeader = 'upload-offset';
-  static const uploadLengthHeader = 'upload-length';
-
   /// The tus server URL
   final String url;
 
@@ -85,17 +76,17 @@ class TusClient {
     required this.url,
     required this.file,
     int? chunkSize,
-    this.tusVersion = defaultTusVersion,
+    this.tusVersion = Headers.defaultTusVersion,
     this.cache,
     Map<String, dynamic>? headers,
     this.metadata,
     Duration? timeout,
     http.Client? httpClient,
-  }) : chunkSize = chunkSize ?? 256.KB,
-       headers = headers?.parseToMapString ?? {},
-       timeout = timeout ?? const Duration(seconds: 30),
-       httpClient = httpClient ?? http.Client(),
-       _state = TusUploadState.notStarted {
+  })  : chunkSize = chunkSize ?? 256.KB,
+        headers = headers?.parseToMapString ?? {},
+        timeout = timeout ?? const Duration(seconds: 30),
+        httpClient = httpClient ?? http.Client(),
+        _state = TusUploadState.notStarted {
     _fingerprint = generateFingerprint();
     _uploadMetadata = generateMetadata();
   }
@@ -124,9 +115,9 @@ class TusClient {
 
     final createHeaders = {
       ...headers,
-      tusResumableHeader: tusVersion,
-      uploadMetadataHeader: _uploadMetadata,
-      uploadLengthHeader: '$_fileSize',
+      Headers.tusResumableHeader: tusVersion,
+      Headers.uploadMetadataHeader: _uploadMetadata,
+      Headers.uploadLengthHeader: '$_fileSize',
     };
 
     final response = await httpClient.post(
@@ -143,8 +134,7 @@ class TusClient {
       );
     }
 
-    String locationURL =
-        response.headers[HttpHeaders.locationHeader]?.toString() ?? '';
+    String locationURL = response.headers[Headers.location]?.toString() ?? '';
     if (locationURL.isEmpty) {
       _state = TusUploadState.error;
       throw ProtocolException(
@@ -190,9 +180,9 @@ class TusClient {
 
       final uploadHeaders = {
         ...headers,
-        tusResumableHeader: tusVersion,
-        uploadOffsetHeader: '$_offset',
-        HttpHeaders.contentTypeHeader: contentTypeOffsetOctetStream,
+        Headers.tusResumableHeader: tusVersion,
+        Headers.uploadOffsetHeader: '$_offset',
+        Headers.contentType: Headers.contentTypeOffsetOctetStream,
       };
 
       // Start upload
@@ -205,7 +195,7 @@ class TusClient {
         // Update upload progress
         _onProgress?.call(_offset, _fileSize, response);
 
-        uploadHeaders[uploadOffsetHeader] = '$_offset';
+        uploadHeaders[Headers.uploadOffsetHeader] = '$_offset';
 
         _uploadFuture = httpClient.patch(
           _uploadURI,
@@ -236,7 +226,8 @@ class TusClient {
           );
         }
 
-        int? serverOffset = _parseOffset(response.headers[uploadOffsetHeader]);
+        int? serverOffset =
+            _parseOffset(response.headers[Headers.uploadOffsetHeader]);
         if (serverOffset == null) {
           _state = TusUploadState.error;
           throw ProtocolException(
@@ -307,10 +298,10 @@ class TusClient {
   /// using the same callbacks used last time [upload()] was called.
   /// Throws [ProtocolException] on server error
   Future<void> resumeUpload() => startUpload(
-    onProgress: _onProgress,
-    onComplete: _onComplete,
-    onTimeout: _onTimeout,
-  );
+        onProgress: _onProgress,
+        onComplete: _onComplete,
+        onTimeout: _onTimeout,
+      );
 
   /// Pause the current upload
   Future? pauseUpload() {
@@ -357,7 +348,7 @@ class TusClient {
 
   /// Get offset from server throwing [ProtocolException] on error
   Future<int> _getOffset() async {
-    final offsetHeaders = {...headers, tusResumableHeader: tusVersion};
+    final offsetHeaders = {...headers, Headers.tusResumableHeader: tusVersion};
     final response = await httpClient.head(_uploadURI, headers: offsetHeaders);
 
     if (!(response.statusCode >= 200 && response.statusCode < 300)) {
@@ -369,7 +360,8 @@ class TusClient {
       );
     }
 
-    int? serverOffset = _parseOffset(response.headers[uploadOffsetHeader]);
+    int? serverOffset =
+        _parseOffset(response.headers[Headers.uploadOffsetHeader]);
     if (serverOffset == null) {
       _state = TusUploadState.error;
       throw ProtocolException(

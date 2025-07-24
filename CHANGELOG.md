@@ -10,6 +10,9 @@ Types of changes
 - `Security` in case of vulnerabilities.
 
 ## 2.1.0
+### Changed
+- Removed usage of `dart:io` to allow support for web.
+
 ### Fixed
 - Fixed error with `TusPersistentCache` keys limit of 255 chars length, due to Hive limitation. _(Thanks [bthnkucuk](https://github.com/bthnkucuk) [PR-2](https://github.com/luis901101/tusc/pull/2))_
 

@@ -20,7 +20,7 @@ void main() async {
     chunkSize: 5.MB,
 
     /// Optional, defaults to 256 KB
-    tusVersion: TusClient.defaultTusVersion,
+    tusVersion: Headers.defaultTusVersion,
 
     /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
     cache: TusPersistentCache('/some/path'),

@@ -1,32 +1,5 @@
-import 'dart:io';
-
-class PlatformUtils {
-  /// Workaround to know if dart code is running on web
-  static bool get isWeb {
-    try {
-      Platform.isAndroid;
-      return false;
-    } catch (e) {
-      print(e);
-    }
-    return true;
-  }
-
-  static bool get isIOS {
-    try {
-      return Platform.isIOS;
-    } catch (e) {
-      print(e);
-    }
-    return false;
-  }
-
-  static bool get isAndroid {
-    try {
-      return Platform.isAndroid;
-    } catch (e) {
-      print(e);
-    }
-    return false;
-  }
-}
+// This is a conditional export.
+// It tries to load the '_html.dart' version if the dart.library.html constant is true (i.e., we're on the web).
+// Otherwise, it falls back to the '_io.dart' version.
+export 'platform_utils_io.dart'
+    if (dart.library.html) 'platform_utils_html.dart';
