@@ -23,6 +23,9 @@ void main() {
   final imageFile = File(Platform.environment['IMAGE_FILE'] ?? ''),
       videoFile = File(Platform.environment['VIDEO_FILE'] ?? '');
 
+  final memoryCache = TusMemoryCache();
+  final persistentCache = TusPersistentCache('');
+
   group('tus client tests', () {
     test('Image upload using tus protocol', () async {
       if (uploadURL.isEmpty) fail('No uploadURL to upload to');
@@ -31,13 +34,14 @@ void main() {
         url: uploadURL,
         chunkSize: 5.KB,
         file: XFile(imageFile.path),
-        cache: TusMemoryCache(),
+        cache: memoryCache,
       );
       bool isComplete = false;
       void onProgress(int count, int total, Response? response) {
         if (isComplete) return;
         print(
-            'tus image upload from file: ${p.basename(imageFile.path)} progress: $count/$total ${(count / total * 100).toInt()}%');
+          'tus image upload from file: ${p.basename(imageFile.path)} progress: $count/$total ${(count / total * 100).toInt()}%',
+        );
         if (response != null) {
           print('----------------------');
           print('Response headers: ${headersPrettyPrint(response.headers)}');
@@ -45,33 +49,42 @@ void main() {
         }
       }
 
-      final testProgressCallback =
-          expectAsyncUntil3(onProgress, () => isComplete);
+      final testProgressCallback = expectAsyncUntil3(
+        onProgress,
+        () => isComplete,
+      );
       try {
         await tusClient.startUpload(
-            onProgress: testProgressCallback,
-            onComplete: (response) {
-              expect(tusClient.state, TusUploadState.completed);
-              print(
-                  'Response headers: ${headersPrettyPrint(response.headers)}');
-              print(
-                  '--------------------------------------------------------------');
-              print(
-                  '--------------------------------------------------------------');
-              print(
-                  '--------------------------------------------------------------');
-              print(
-                  '------------------------Upload completed----------------------');
-              print(tusClient.uploadUrl);
-              print(
-                  '--------------------------------------------------------------');
-              print(
-                  '--------------------------------------------------------------');
-              print(
-                  '--------------------------------------------------------------');
-              isComplete = true;
-              testProgressCallback(0, 0, null);
-            });
+          onProgress: testProgressCallback,
+          onComplete: (response) {
+            expect(tusClient.state, TusUploadState.completed);
+            print('Response headers: ${headersPrettyPrint(response.headers)}');
+            print(
+              '--------------------------------------------------------------',
+            );
+            print(
+              '--------------------------------------------------------------',
+            );
+            print(
+              '--------------------------------------------------------------',
+            );
+            print(
+              '------------------------Upload completed----------------------',
+            );
+            print(tusClient.uploadUrl);
+            print(
+              '--------------------------------------------------------------',
+            );
+            print(
+              '--------------------------------------------------------------',
+            );
+            print(
+              '--------------------------------------------------------------',
+            );
+            isComplete = true;
+            testProgressCallback(0, 0, null);
+          },
+        );
       } on ProtocolException catch (e) {
         print('Response status code: ${e.response.statusCode}');
         print('Response status reasonPhrase: ${e.response.reasonPhrase}');
@@ -91,13 +104,14 @@ void main() {
         url: uploadURL,
         chunkSize: 256.KB,
         file: XFile(videoFile.path),
-        cache: TusPersistentCache(''),
+        cache: persistentCache,
       );
       bool isComplete = false;
       void onProgress(int count, int total, Response? response) {
         if (isComplete) return;
         print(
-            'tus video upload from file: ${p.basename(videoFile.path)} progress: $count/$total ${(count / total * 100).toInt()}%');
+          'tus video upload from file: ${p.basename(videoFile.path)} progress: $count/$total ${(count / total * 100).toInt()}%',
+        );
         if (response != null) {
           print('----------------------');
           print('Response headers: ${headersPrettyPrint(response.headers)}');
@@ -105,45 +119,61 @@ void main() {
         }
       }
 
-      final testProgressCallback =
-          expectAsyncUntil3(onProgress, () => isComplete);
+      final testProgressCallback = expectAsyncUntil3(
+        onProgress,
+        () => isComplete,
+      );
       tusClient.startUpload(
         onProgress: testProgressCallback,
         onComplete: (response) {
           print('Response headers: ${headersPrettyPrint(response.headers)}');
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '------------------------Upload completed----------------------');
+            '------------------------Upload completed----------------------',
+          );
           print(tusClient.uploadUrl);
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           isComplete = true;
           testProgressCallback(0, 0, null);
         },
         onTimeout: () {
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '------------------------Upload request timeout----------------');
+            '------------------------Upload request timeout----------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
           print(
-              '--------------------------------------------------------------');
+            '--------------------------------------------------------------',
+          );
         },
       );
 
@@ -195,5 +225,21 @@ void main() {
         print('--------------------------------------------------------------');
       });
     }, timeout: Timeout(Duration(minutes: 10)));
+
+    test('Fingerprint max length', () async {
+      // This path has more than 400 chars
+      final reallyLongFilePath =
+          'this/is/a/really/long/file/path/that/should/be/hashed/to/a/fingerprint/that/is/longer/than/256/and/should/not/be/truncated/to/128/characters/so/that/we/can/test/the/fingerprint/generation/and/make/sure/it/works/as/expected/and/does/not/cause/any/issues/with/the/tus/client/implementation/and/should/be/able/to/be/uploaded/without/any/problems/or/errors/and/should/not/cause/any/performance/impact/on/the/upload/process/or/the/client/performance/in/general';
+      final tusClient = TusClient(
+        url: uploadURL,
+        chunkSize: 5.KB,
+        file: XFile(reallyLongFilePath),
+        cache: persistentCache,
+      );
+      final fingerprint = tusClient.generateFingerprint();
+      await tusClient.cache?.set(fingerprint, uploadURL);
+      final getValue = await tusClient.cache?.get(fingerprint);
+      expect(uploadURL, getValue);
+    }, timeout: Timeout(Duration(seconds: 10)));
   });
 }

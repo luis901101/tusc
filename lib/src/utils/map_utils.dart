@@ -2,8 +2,9 @@ import 'dart:convert';
 
 extension MapExtension<K, V> on Map<K, V> {
   Map<K2, V2> mapWhere<K2, V2>(
-      MapEntry<K2, V2> Function(K key, V value) convert,
-      bool Function(K key, V value) test) {
+    MapEntry<K2, V2> Function(K key, V value) convert,
+    bool Function(K key, V value) test,
+  ) {
     Map<K2, V2> result = {};
     for (final entry in entries) {
       if (test(entry.key, entry.value)) {
@@ -15,9 +16,10 @@ extension MapExtension<K, V> on Map<K, V> {
   }
 
   Map<String, String> get parseToMapString => mapWhere(
-        (key, value) => MapEntry<String, String>(
-            key is String ? key : jsonEncode(key),
-            value is String ? value : jsonEncode(value)),
-        (key, value) => key != null && value != null,
-      );
+    (key, value) => MapEntry<String, String>(
+      key is String ? key : jsonEncode(key),
+      value is String ? value : jsonEncode(value),
+    ),
+    (key, value) => key != null && value != null,
+  );
 }

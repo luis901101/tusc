@@ -101,6 +101,6 @@ class TusPersistentCache implements TusCache {
   }
 }
 
-String _hashKeyWithSha1(String fingerprint) {
-  return sha1.convert(utf8.encode(fingerprint)).toString(); // 40 karakterlik sabit çıktı
-}
+// 40 chars output
+String _hashKeyWithSha1(String fingerprint) =>
+    sha1.convert(utf8.encode(fingerprint)).toString();

@@ -9,6 +9,10 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## 2.1.0
+### Fixed
+- Fixed error with `TusPersistentCache` keys limit of 255 chars length, due to Hive limitation. _(Thanks [bthnkucuk](https://github.com/bthnkucuk) [PR-2](https://github.com/luis901101/tusc/pull/2))_
+
 ## 2.0.0
 ### Changed
 - Changed `hive` dependency to `hive_ce`.

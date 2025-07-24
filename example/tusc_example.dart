@@ -29,11 +29,11 @@ void main() async {
     headers: <String, dynamic>{
       /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
       HttpHeaders.authorizationHeader:
-          'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig'
+          'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig',
     },
     metadata: <String, dynamic>{
       /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
-      'name': 'my-video'
+      'name': 'my-video',
     },
     timeout: Duration(seconds: 10),
 

@@ -16,8 +16,8 @@ import 'package:path/path.dart' as p;
 /// Callback to listen the progress for sending data.
 /// [count] the length of the bytes that have been sent.
 /// [total] the content length.
-typedef ProgressCallback = void Function(
-    int count, int total, http.Response? response);
+typedef ProgressCallback =
+    void Function(int count, int total, http.Response? response);
 
 /// Callback to listen when upload finishes
 typedef CompleteCallback = void Function(http.Response response);
@@ -91,11 +91,11 @@ class TusClient {
     this.metadata,
     Duration? timeout,
     http.Client? httpClient,
-  })  : chunkSize = chunkSize ?? 256.KB,
-        headers = headers?.parseToMapString ?? {},
-        timeout = timeout ?? const Duration(seconds: 30),
-        httpClient = httpClient ?? http.Client(),
-        _state = TusUploadState.notStarted {
+  }) : chunkSize = chunkSize ?? 256.KB,
+       headers = headers?.parseToMapString ?? {},
+       timeout = timeout ?? const Duration(seconds: 30),
+       httpClient = httpClient ?? http.Client(),
+       _state = TusUploadState.notStarted {
     _fingerprint = generateFingerprint();
     _uploadMetadata = generateMetadata();
   }
@@ -129,15 +129,18 @@ class TusClient {
       uploadLengthHeader: '$_fileSize',
     };
 
-    final response =
-        await httpClient.post(Uri.parse(url), headers: createHeaders);
+    final response = await httpClient.post(
+      Uri.parse(url),
+      headers: createHeaders,
+    );
 
     if (!(response.statusCode >= 200 && response.statusCode < 300)) {
       _state = TusUploadState.error;
       throw ProtocolException(
-          _errorMessage =
-              'Unexpected status code (${response.statusCode}) while creating upload',
-          response);
+        _errorMessage =
+            'Unexpected status code (${response.statusCode}) while creating upload',
+        response,
+      );
     }
 
     String locationURL =
@@ -145,8 +148,9 @@ class TusClient {
     if (locationURL.isEmpty) {
       _state = TusUploadState.error;
       throw ProtocolException(
-          _errorMessage = 'Missing upload URL in response for creating upload',
-          response);
+        _errorMessage = 'Missing upload URL in response for creating upload',
+        response,
+      );
     }
 
     _uploadURI = _parseToURI(locationURL);
@@ -188,7 +192,7 @@ class TusClient {
         ...headers,
         tusResumableHeader: tusVersion,
         uploadOffsetHeader: '$_offset',
-        HttpHeaders.contentTypeHeader: contentTypeOffsetOctetStream
+        HttpHeaders.contentTypeHeader: contentTypeOffsetOctetStream,
       };
 
       // Start upload
@@ -208,37 +212,46 @@ class TusClient {
           headers: uploadHeaders,
           body: await _getData(),
         );
-        response = await _uploadFuture?.timeout(timeout, onTimeout: () {
-          _onTimeout?.call();
-          _state = TusUploadState.error;
-          return http.Response('', HttpStatus.requestTimeout,
-              reasonPhrase: _errorMessage = 'Request timeout');
-        });
+        response = await _uploadFuture?.timeout(
+          timeout,
+          onTimeout: () {
+            _onTimeout?.call();
+            _state = TusUploadState.error;
+            return http.Response(
+              '',
+              HttpStatus.requestTimeout,
+              reasonPhrase: _errorMessage = 'Request timeout',
+            );
+          },
+        );
         _uploadFuture = null;
 
         // Check if correctly uploaded
         if (!(response!.statusCode >= 200 && response.statusCode < 300)) {
           _state = TusUploadState.error;
           throw ProtocolException(
-              _errorMessage =
-                  'Unexpected status code (${response.statusCode}) while uploading chunk',
-              response);
+            _errorMessage =
+                'Unexpected status code (${response.statusCode}) while uploading chunk',
+            response,
+          );
         }
 
         int? serverOffset = _parseOffset(response.headers[uploadOffsetHeader]);
         if (serverOffset == null) {
           _state = TusUploadState.error;
           throw ProtocolException(
-              _errorMessage =
-                  'Response to PATCH request contains no or invalid Upload-Offset header',
-              response);
+            _errorMessage =
+                'Response to PATCH request contains no or invalid Upload-Offset header',
+            response,
+          );
         }
         if (_offset != serverOffset) {
           _state = TusUploadState.error;
           throw ProtocolException(
-              _errorMessage =
-                  'Response contains different Upload-Offset value ($serverOffset) than expected ($_offset)',
-              response);
+            _errorMessage =
+                'Response contains different Upload-Offset value ($serverOffset) than expected ($_offset)',
+            response,
+          );
         }
       }
 
@@ -294,26 +307,32 @@ class TusClient {
   /// using the same callbacks used last time [upload()] was called.
   /// Throws [ProtocolException] on server error
   Future<void> resumeUpload() => startUpload(
-        onProgress: _onProgress,
-        onComplete: _onComplete,
-        onTimeout: _onTimeout,
-      );
+    onProgress: _onProgress,
+    onComplete: _onComplete,
+    onTimeout: _onTimeout,
+  );
 
   /// Pause the current upload
   Future? pauseUpload() {
-    return _uploadFuture?.timeout(Duration.zero, onTimeout: () {
-      _state = TusUploadState.paused;
-      return http.Response('', 200, reasonPhrase: 'Upload request paused');
-    });
+    return _uploadFuture?.timeout(
+      Duration.zero,
+      onTimeout: () {
+        _state = TusUploadState.paused;
+        return http.Response('', 200, reasonPhrase: 'Upload request paused');
+      },
+    );
   }
 
   /// Cancel the current upload
   Future? cancelUpload() {
-    return _uploadFuture?.timeout(Duration.zero, onTimeout: () {
-      _state = TusUploadState.cancelled;
-      cache?.remove(_fingerprint);
-      return http.Response('', 200, reasonPhrase: 'Upload request cancelled');
-    });
+    return _uploadFuture?.timeout(
+      Duration.zero,
+      onTimeout: () {
+        _state = TusUploadState.cancelled;
+        cache?.remove(_fingerprint);
+        return http.Response('', 200, reasonPhrase: 'Upload request cancelled');
+      },
+    );
   }
 
   /// Override this method to customize creating file fingerprint
@@ -330,34 +349,33 @@ class TusClient {
     }
 
     return meta.entries
-        .map((entry) =>
-            '${entry.key} ${base64.encode(utf8.encode(entry.value))}')
+        .map(
+          (entry) => '${entry.key} ${base64.encode(utf8.encode(entry.value))}',
+        )
         .join(',');
   }
 
   /// Get offset from server throwing [ProtocolException] on error
   Future<int> _getOffset() async {
-    final offsetHeaders = {
-      ...headers,
-      tusResumableHeader: tusVersion,
-    };
+    final offsetHeaders = {...headers, tusResumableHeader: tusVersion};
     final response = await httpClient.head(_uploadURI, headers: offsetHeaders);
 
     if (!(response.statusCode >= 200 && response.statusCode < 300)) {
       _state = TusUploadState.error;
       throw ProtocolException(
-          _errorMessage =
-              'Unexpected status code (${response.statusCode}) while resuming upload',
-          response);
+        _errorMessage =
+            'Unexpected status code (${response.statusCode}) while resuming upload',
+        response,
+      );
     }
 
     int? serverOffset = _parseOffset(response.headers[uploadOffsetHeader]);
     if (serverOffset == null) {
       _state = TusUploadState.error;
       throw ProtocolException(
-          _errorMessage =
-              'Missing upload offset in response for resuming upload',
-          response);
+        _errorMessage = 'Missing upload offset in response for resuming upload',
+        response,
+      );
     }
     return serverOffset;
   }
