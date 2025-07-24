@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert' show base64, utf8;
 import 'dart:typed_data' show Uint8List;
 
 import 'package:http/http.dart' as http;
@@ -330,17 +329,13 @@ abstract class TusBaseClient {
 
   /// Override this to customize the header 'Upload-Metadata'
   String generateMetadata() {
-    final meta = metadata?.parseToMapString ?? {};
+    final meta = metadata ?? <String, dynamic>{};
 
     if (!meta.containsKey('filename') && fileName != null) {
       meta['filename'] = fileName!;
     }
 
-    return meta.entries
-        .map(
-          (entry) => '${entry.key} ${base64.encode(utf8.encode(entry.value))}',
-        )
-        .join(',');
+    return meta.parseToMetadata;
   }
 
   /// Get offset from server throwing [ProtocolException] on error

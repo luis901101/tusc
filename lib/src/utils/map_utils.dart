@@ -22,4 +22,10 @@ extension MapExtension<K, V> on Map<K, V> {
         ),
         (key, value) => key != null && value != null,
       );
+
+  String get parseToMetadata => parseToMapString.entries
+      .map(
+        (entry) => '${entry.key} ${base64.encode(utf8.encode(entry.value))}',
+      )
+      .join(',');
 }

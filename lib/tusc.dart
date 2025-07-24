@@ -1,6 +1,7 @@
 library;
 
 export 'package:tusc/src/utils/num_utils.dart';
+export 'package:tusc/src/utils/map_utils.dart';
 export 'package:tusc/src/utils/header_utils.dart';
 export 'package:tusc/src/client_base.dart';
 export 'package:tusc/src/client.dart';
