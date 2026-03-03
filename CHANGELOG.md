@@ -9,6 +9,15 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## 3.0.0
+### Added
+- Added support for resuming uploads using a direct `uploadUrl`, allowing the client to skip the upload creation step without requiring a cache.
+- Updated `TusClient` and `TusStreamClient` constructors to accept an optional `uploadUrl`.
+- Added `clear()` method to `TusCache`, `TusMemoryCache`, and `TusPersistentCache`.
+- Improved documentation and code examples in `README.md` and library files.
+- Refactored internal URI parsing and fingerprinting logic.
+- Added comprehensive assertion checks for `url` and `uploadUrl` parameters.
+
 ## 2.1.0
 ### Added
 - Added `TusStreamClient` to support stream uploads.

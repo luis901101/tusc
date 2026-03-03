@@ -22,9 +22,53 @@ typedef CompleteCallback = void Function(http.Response response);
 /// Callback to listen when upload fails
 typedef ErrorCallback = void Function(ProtocolException error);
 
-/// This is a base client for the tus(https://tus.io) protocol.
+/// A base client for the [tus](https://tus.io) resumable upload protocol.
+///
+/// Provides core functionality for uploading files in chunks, supporting
+/// pause, resume, and cancellation of uploads.
+///
+/// ## Setup
+///
+/// To create a new upload, provide the [url] of the tus server. The client
+/// will send a `POST` request to this URL to create the upload and obtain
+/// an upload URL from the server:
+///
+/// ```dart
+/// final client = MyTusClient(
+///   url: 'https://example.com/files',
+/// );
+/// ```
+///
+/// To resume an existing upload without creating a new one on the server,
+/// provide the [uploadUrl] obtained from a previous session. In this case,
+/// [url] is not required:
+///
+/// ```dart
+/// final client = MyTusClient(
+///   uploadUrl: 'https://example.com/files/my-upload-id',
+/// );
+/// ```
+///
+/// ## Resuming uploads
+///
+/// To enable pause/resume support across sessions, provide a [TusCache]
+/// implementation. The client will store and retrieve upload URLs using
+/// the file fingerprint as the key:
+///
+/// ```dart
+/// final client = MyTusClient(
+///   url: 'https://example.com/files',
+///   cache: TusPersistentCache(),
+/// );
+/// ```
 abstract class TusBaseClient {
-  /// The tus server URL
+  /// The base URL of the tus server where uploads will be created.
+  /// This is used to send POST requests to create new uploads.
+  ///
+  /// If you already have an upload URL from a previous session, pass it via
+  /// [uploadUrl] in the constructor to skip the upload creation step and resume
+  /// directly from where it left off. This is particularly useful for resuming
+  /// interrupted uploads without needing to create a new upload on the server.
   final String url;
 
   /// The tus protocol version you want to use
@@ -66,7 +110,8 @@ abstract class TusBaseClient {
   String? _errorMessage;
 
   TusBaseClient({
-    required this.url,
+    String? url,
+    String? uploadUrl,
     int? chunkSize,
     this.tusVersion = Headers.defaultTusVersion,
     this.cache,
@@ -74,11 +119,18 @@ abstract class TusBaseClient {
     this.metadata,
     Duration? timeout,
     http.Client? httpClient,
-  })  : chunkSize = chunkSize ?? 256.KB,
+  })  : url = url ?? '',
+        _uploadURI =
+            uploadUrl != null ? Uri.tryParse(uploadUrl) ?? Uri() : Uri(),
+        chunkSize = chunkSize ?? 256.KB,
         headers = headers?.parseToMapString ?? {},
         timeout = timeout ?? const Duration(seconds: 30),
         httpClient = httpClient ?? http.Client(),
-        _state = TusUploadState.notStarted;
+        _state = TusUploadState.notStarted,
+        assert(
+            (url != null && url.isNotEmpty) ||
+                (uploadUrl != null && uploadUrl.isNotEmpty),
+            'Either url or uploadUrl must be provided');
 
   /// Get the upload state
   TusUploadState get state => _state;
@@ -107,37 +159,39 @@ abstract class TusBaseClient {
     _fingerprint = generateFingerprint();
     _uploadMetadata = generateMetadata();
 
-    final createHeaders = {
-      ...headers,
-      Headers.tusResumableHeader: tusVersion,
-      Headers.uploadMetadataHeader: _uploadMetadata,
-      Headers.uploadLengthHeader: '$_fileSize',
-    };
+    if (uploadUrl.isEmpty) {
+      final createHeaders = {
+        ...headers,
+        Headers.tusResumableHeader: tusVersion,
+        Headers.uploadMetadataHeader: _uploadMetadata,
+        Headers.uploadLengthHeader: '$_fileSize',
+      };
 
-    final response = await httpClient.post(
-      Uri.parse(url),
-      headers: createHeaders,
-    );
-
-    if (!(response.statusCode >= 200 && response.statusCode < 300)) {
-      _state = TusUploadState.error;
-      throw ProtocolException(
-        _errorMessage =
-            'Unexpected status code (${response.statusCode}) while creating upload',
-        response,
+      final response = await httpClient.post(
+        Uri.parse(url),
+        headers: createHeaders,
       );
-    }
 
-    String locationURL = response.headers[Headers.location]?.toString() ?? '';
-    if (locationURL.isEmpty) {
-      _state = TusUploadState.error;
-      throw ProtocolException(
-        _errorMessage = 'Missing upload URL in response for creating upload',
-        response,
-      );
-    }
+      if (!(response.statusCode >= 200 && response.statusCode < 300)) {
+        _state = TusUploadState.error;
+        throw ProtocolException(
+          _errorMessage =
+              'Unexpected status code (${response.statusCode}) while creating upload',
+          response,
+        );
+      }
 
-    _uploadURI = _parseToURI(locationURL);
+      String locationURL = response.headers[Headers.location]?.toString() ?? '';
+      if (locationURL.isEmpty) {
+        _state = TusUploadState.error;
+        throw ProtocolException(
+          _errorMessage = 'Missing upload URL in response for creating upload',
+          response,
+        );
+      }
+
+      _uploadURI = parseToURI(locationURL);
+    }
     cache?.set(_fingerprint, _uploadURI.toString());
     _state = TusUploadState.created;
   }
@@ -146,7 +200,9 @@ abstract class TusBaseClient {
   Future<bool> canResume() async {
     if (!resumingEnabled) return false;
 
-    _uploadURI = Uri.parse(await cache?.get(_fingerprint) ?? '');
+    if (uploadUrl.isEmpty) {
+      _uploadURI = Uri.parse(await cache?.get(_fingerprint) ?? '');
+    }
 
     return _uploadURI.toString().isNotEmpty;
   }
@@ -162,6 +218,8 @@ abstract class TusBaseClient {
   Future<void> _upload() async {
     try {
       _errorMessage = null;
+      _fileSize = await fileSize;
+
       if (!await canResume()) {
         await createUpload();
       }
@@ -249,7 +307,7 @@ abstract class TusBaseClient {
         // Upload completed
         _state = TusUploadState.completed;
         cache?.remove(_fingerprint);
-        _onComplete?.call(response!);
+        _onComplete?.call(response ?? http.Response('', HttpStatus.ok));
       }
     } on ProtocolException catch (e) {
       _notifyError(e);
@@ -375,7 +433,7 @@ abstract class TusBaseClient {
     return int.tryParse(offset);
   }
 
-  Uri _parseToURI(String locationURL) {
+  Uri parseToURI(String locationURL) {
     if (locationURL.contains(',')) {
       locationURL = locationURL.substring(0, locationURL.indexOf(','));
     }

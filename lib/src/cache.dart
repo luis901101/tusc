@@ -21,6 +21,9 @@ abstract class TusCache {
 
   /// Remove an entry from the cache using an upload's [fingerprint].
   Future<void> remove(String fingerprint);
+
+  /// Clears the cache
+  Future<void> clear();
 }
 
 /// This class is used to cache upload url in memory and to resume upload later.
@@ -46,6 +49,12 @@ class TusMemoryCache implements TusCache {
   Future<void> remove(String fingerprint) async {
     final hashedFingerprint = _hashKeyWithSha1(fingerprint);
     _cache.remove(hashedFingerprint);
+  }
+
+  @override
+  Future<void> clear() {
+    _cache.clear();
+    return Future.value();
   }
 }
 
@@ -98,6 +107,12 @@ class TusPersistentCache implements TusCache {
     final hashedFingerprint = _hashKeyWithSha1(fingerprint);
     await _openBox();
     _box.delete(hashedFingerprint);
+  }
+
+  @override
+  Future<void> clear() async {
+    await _openBox();
+    await _box.clear();
   }
 }
 

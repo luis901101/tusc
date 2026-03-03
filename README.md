@@ -39,10 +39,10 @@ import 'package:http/http.dart' as http;
 void main() async {
   /// File to be uploaded
   final file = XFile('/path/to/some/video.mp4');
-  final uploadURL = 'https://master.tus.io/files';
+  final tusServerURL = 'https://master.tus.io/files';
 
   /// Initialize a TusClient instance from a XFile
-  final tusClient = initTusClient(file, uploadURL);
+  final tusClient = initTusClient(file, tusServerURL);
   handleClient(tusClient);
 
   /// Initialize a TusStreamClient instance from a Stream generator function
@@ -50,13 +50,18 @@ void main() async {
   /// The only difference is that this client doesn't rely on a file but rather
   /// on a stream of bytes. It's intended for cases where the file is excessively
   /// large.
-  final tusStreamClient = await initTusStreamClient(file, uploadURL);
+  final tusStreamClient = await initTusStreamClient(file, tusServerURL);
   handleClient(tusStreamClient);
 }
 
-TusBaseClient initTusClient(XFile file, String uploadURL) => TusClient(
-  /// Required
-  url: uploadURL,
+TusBaseClient initTusClient(XFile file, String tusServerURL) => TusClient(
+  /// Required if [uploadUrl] is not provided.
+  /// The base URL of the tus server. A POST request will be sent here to create a new upload.
+  url: tusServerURL,
+  /// Required if [url] is not provided.
+  /// Use this to skip the upload creation step and resume directly from a known upload URL
+  /// (e.g. obtained from a previous session or stored externally). No cache needed.
+  uploadUrl: 'https://master.tus.io/files/my-upload-id',
   /// Required
   file: file,
   /// Optional, defaults to 256 KB
@@ -80,9 +85,14 @@ TusBaseClient initTusClient(XFile file, String uploadURL) => TusClient(
   httpClient: http.Client(),
 );
 
-Future<TusBaseClient> initTusStreamClient(XFile file, String uploadURL) async => TusStreamClient(
-  /// Required
-  url: uploadURL,
+Future<TusBaseClient> initTusStreamClient(XFile file, String tusServerURL) async => TusStreamClient(
+  /// Required if [uploadUrl] is not provided.
+  /// The base URL of the tus server. A POST request will be sent here to create a new upload.
+  url: tusServerURL,
+  /// Required if [url] is not provided.
+  /// Use this to skip the upload creation step and resume directly from a known upload URL
+  /// (e.g. obtained from a previous session or stored externally). No cache needed.
+  uploadUrl: 'https://master.tus.io/files/my-upload-id',
   /// Required
   fileStreamGenerator: () => file.openRead(),
   /// Required
@@ -164,7 +174,7 @@ For specifying the `chunkSize` you can easily set it like `512.KB` or `10.MB` an
 
 ```dart
 final tusClient = TusClient(
-    uploadURL,
+    tusServerURL,
     file,
     chunkSize: 10.MB,
 );
@@ -182,9 +192,11 @@ For `TusClient` to manage `pause/resume` uploads you can set a `cache` by using:
 - `TusMemoryCache`: with this cache you can `pause/resume` uploads while your app is running. If your app crashes or simply closes you will not be able to resume a pending upload.
 - `TusPersistentCache`: with this cache you can `pause/resume` uploads any time, no matter if your app crashes, closes or even your device restarts.
 
+> **Note:** If you already know the upload URL from a previous session (e.g. you stored it yourself), you can pass it via `uploadUrl` in the constructor and skip the cache entirely. See [Resuming with uploadUrl](#resuming-with-uploadurl).
+
 ```dart
 final tusClient = TusClient(
-    uploadURL,
+    tusServerURL,
     file,
     cache: TusMemoryCache(),
 );
@@ -192,7 +204,7 @@ final tusClient = TusClient(
 or
 ```dart
 final tusClient = TusClient(
-    uploadURL,
+    tusServerURL,
     file,
     cache: TusPersistentCache('/some/path'),
 );
@@ -213,7 +225,7 @@ Future<void> sample() async {
   Directory dir = kIsWeb ? Directory.systemTemp : await getApplicationDocumentsDirectory();
 
   final tusClient = TusClient(
-    uploadURL,
+    tusServerURL,
     file,
     cache: TusPersistentCache(dir.path),
   );
@@ -234,3 +246,32 @@ For resuming a previously paused upload to take place you should have set a `cac
 Resuming an upload can be made in two ways:
 - By calling `tusClient.startUpload(...)` again. Take into account by calling `startUpload(...)` again you will lose the reference to the previous callbacks you set in the first call to `startUpload(...)` before the pause. Here you should set the callbacks again as well.
 - By calling `tusClient.resumeUpload()`. With this function `resumeUpload()` the upload is resumed and the callbacks you set in the first call to `startUpload(...)` before pause are used to notify. Note that if you resume an upload previously cancelled, the upload will start from the beginning.
+
+### Resuming with `uploadUrl`
+If you stored the upload URL externally (e.g. in a database or shared preferences) you can pass it directly via `uploadUrl` when constructing the client. This lets the client skip the upload creation step and resume from exactly where the previous session left off — no `cache` required.
+
+```dart
+// Save the upload URL after starting an upload
+final savedUploadUrl = tusClient.uploadUrl;
+
+// Later — in a new session — resume by passing uploadUrl directly
+final tusClient = TusClient(
+  uploadUrl: savedUploadUrl,   // resumes from the known URL; no POST is sent to the server
+  file: XFile('/path/to/some/video.mp4'),
+);
+tusClient.startUpload(...);
+```
+
+The same applies to `TusStreamClient`:
+
+```dart
+final tusStreamClient = TusStreamClient(
+  uploadUrl: savedUploadUrl,
+  fileStreamGenerator: () => file.openRead(),
+  fileSize: await file.length(),
+  fileName: file.name,
+);
+tusStreamClient.startUpload(...);
+```
+
+> **Note:** `url` and `uploadUrl` are mutually exclusive — you must provide exactly one of them.

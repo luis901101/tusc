@@ -5,7 +5,26 @@ import 'dart:typed_data' show Uint8List, BytesBuilder;
 import 'package:cross_file/cross_file.dart' show XFile;
 import 'package:tusc/src/client_base.dart';
 
-/// This is a client for the tus(https://tus.io) protocol.
+/// A tus resumable upload client that reads data from an [XFile].
+///
+/// Use this client when your upload source is a file on the device.
+///
+/// Provide [url] to create a new upload on the server, or [uploadUrl] to
+/// resume an existing one without creating a new upload:
+///
+/// ```dart
+/// // New upload
+/// final client = TusClient(
+///   url: 'https://example.com/files',
+///   file: XFile('/path/to/file'),
+/// );
+///
+/// // Resume existing upload
+/// final client = TusClient(
+///   uploadUrl: 'https://example.com/files/my-upload-id',
+///   file: XFile('/path/to/file'),
+/// );
+/// ```
 class TusClient extends TusBaseClient {
   /// The file to upload
   final XFile file;
@@ -14,7 +33,8 @@ class TusClient extends TusBaseClient {
 
   TusClient({
     required this.file,
-    required super.url,
+    super.url,
+    super.uploadUrl,
     super.chunkSize,
     super.tusVersion,
     super.cache,

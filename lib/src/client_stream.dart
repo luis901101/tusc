@@ -5,7 +5,32 @@ import 'dart:typed_data';
 import 'package:tusc/src/client_base.dart';
 import 'package:tusc/src/stream_handler.dart';
 
-/// This is a client for the tus(https://tus.io) protocol.
+/// A tus resumable upload client that reads data from a [Stream].
+///
+/// Use this client when your upload source is a stream, such as a file,
+/// network response, or any other streaming data source.
+///
+/// Provide [url] to create a new upload on the server, or [uploadUrl] to
+/// resume an existing one without creating a new upload:
+///
+/// ```dart
+/// // New upload
+/// final client = TusStreamClient(
+///   url: 'https://example.com/files',
+///   fileStreamGenerator: () => file.openRead(),
+///   fileSize: await file.length(),
+/// );
+///
+/// // Resume existing upload
+/// final client = TusStreamClient(
+///   uploadUrl: 'https://example.com/files/my-upload-id',
+///   fileStreamGenerator: () => file.openRead(),
+///   fileSize: await file.length(),
+/// );
+/// ```
+///
+/// See [fileStreamGenerator] for details on how to provide the stream,
+/// including how to handle streams that cannot be recreated.
 class TusStreamClient extends TusBaseClient {
   /// The stream handler that will read the stream in chunks
   final StreamHandler _streamHandler;
@@ -83,7 +108,8 @@ class TusStreamClient extends TusBaseClient {
     required this.fileStreamGenerator,
     required int fileSize,
     String? fileName,
-    required super.url,
+    super.url,
+    super.uploadUrl,
     super.chunkSize,
     super.tusVersion,
     super.cache,
