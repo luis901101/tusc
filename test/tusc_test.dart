@@ -30,10 +30,7 @@ void main() {
 
   group('Assertion tests', () {
     test('Null url and uploadUrl test', () {
-      expect(
-        () => TusClient(file: XFile('')),
-        throwsA(isA<AssertionError>()),
-      );
+      expect(() => TusClient(file: XFile('')), throwsA(isA<AssertionError>()));
     });
     test('Empty url and uploadUrl test', () {
       expect(
@@ -85,130 +82,141 @@ void main() {
 
   group('Tus Client tests', () {
     test(
-        'Image upload to tusServerURL using Tus Client with tus protocol',
-        () async => await genericImageUploadTest(
-            imageFile: imageFile,
-            tusClient: TusClient(
-              url: tusServerURL,
-              file: XFile(imageFile.path),
-              chunkSize: imageChunkSize,
-              cache: TusMemoryCache(),
-            )),
-        timeout: Timeout(Duration(minutes: 1)));
+      'Image upload to tusServerURL using Tus Client with tus protocol',
+      () async => await genericImageUploadTest(
+        imageFile: imageFile,
+        tusClient: TusClient(
+          url: tusServerURL,
+          file: XFile(imageFile.path),
+          chunkSize: imageChunkSize,
+          cache: TusMemoryCache(),
+        ),
+      ),
+      timeout: Timeout(Duration(minutes: 1)),
+    );
     test(
-        'Image upload to uploadUrl using Tus Client with tus protocol',
-        () async => await genericImageUploadTest(
-              imageFile: imageFile,
-              tusClient: TusClient(
-                uploadUrl: await generateUploadUrlForTest(
-                  url: tusServerURL,
-                  file: imageFile,
-                ),
-                file: XFile(imageFile.path),
-                chunkSize: imageChunkSize,
-                cache: TusMemoryCache(),
-              ),
-            ),
-        timeout: Timeout(Duration(minutes: 1)));
+      'Image upload to uploadUrl using Tus Client with tus protocol',
+      () async => await genericImageUploadTest(
+        imageFile: imageFile,
+        tusClient: TusClient(
+          uploadUrl: await generateUploadUrlForTest(
+            url: tusServerURL,
+            file: imageFile,
+          ),
+          file: XFile(imageFile.path),
+          chunkSize: imageChunkSize,
+          cache: TusMemoryCache(),
+        ),
+      ),
+      timeout: Timeout(Duration(minutes: 1)),
+    );
 
     test(
-        'Video upload to tusServerURL using Tus Client using tus protocol',
-        () async => await genericVideoUploadTest(
-              videoFile: videoFile,
-              tusClient: TusClient(
-                url: tusServerURL,
-                file: XFile(videoFile.path),
-                chunkSize: videoChunkSize,
-                cache: TusPersistentCache(''),
-              ),
-            ),
-        timeout: Timeout(Duration(minutes: 10)));
+      'Video upload to tusServerURL using Tus Client using tus protocol',
+      () async => await genericVideoUploadTest(
+        videoFile: videoFile,
+        tusClient: TusClient(
+          url: tusServerURL,
+          file: XFile(videoFile.path),
+          chunkSize: videoChunkSize,
+          cache: TusPersistentCache(''),
+        ),
+      ),
+      timeout: Timeout(Duration(minutes: 10)),
+    );
     test(
-        'Video upload to uploadUrl using Tus Client using tus protocol',
-        () async => await genericVideoUploadTest(
-              videoFile: videoFile,
-              tusClient: TusClient(
-                uploadUrl: await generateUploadUrlForTest(
-                  url: tusServerURL,
-                  file: videoFile,
-                ),
-                file: XFile(videoFile.path),
-                chunkSize: videoChunkSize,
-                cache: TusPersistentCache(''),
-              ),
-            ),
-        timeout: Timeout(Duration(minutes: 10)));
+      'Video upload to uploadUrl using Tus Client using tus protocol',
+      () async => await genericVideoUploadTest(
+        videoFile: videoFile,
+        tusClient: TusClient(
+          uploadUrl: await generateUploadUrlForTest(
+            url: tusServerURL,
+            file: videoFile,
+          ),
+          file: XFile(videoFile.path),
+          chunkSize: videoChunkSize,
+          cache: TusPersistentCache(''),
+        ),
+      ),
+      timeout: Timeout(Duration(minutes: 10)),
+    );
   });
 
   group('Tus Stream Client tests', () {
     test(
-        'Image upload to tusServerURL using Tus Stream Client with tus protocol',
-        () async => await genericImageUploadTest(
-              imageFile: imageFile,
-              tusClient: TusStreamClient(
-                url: tusServerURL,
-                fileStreamGenerator: () => imageFile.openRead(),
-                fileSize: imageFile.lengthSync(),
-                fileName: p.basename(imageFile.path),
-                chunkSize: imageChunkSize,
-                cache: TusMemoryCache(),
-              ),
-            ),
-        timeout: Timeout(Duration(hours: 1)));
+      'Image upload to tusServerURL using Tus Stream Client with tus protocol',
+      () async => await genericImageUploadTest(
+        imageFile: imageFile,
+        tusClient: TusStreamClient(
+          url: tusServerURL,
+          fileStreamGenerator: () => imageFile.openRead(),
+          fileSize: imageFile.lengthSync(),
+          fileName: p.basename(imageFile.path),
+          chunkSize: imageChunkSize,
+          cache: TusMemoryCache(),
+        ),
+      ),
+      timeout: Timeout(Duration(hours: 1)),
+    );
     test(
-        'Image upload to uploadUrl using Tus Stream Client with tus protocol',
-        () async => await genericImageUploadTest(
-              imageFile: imageFile,
-              tusClient: TusStreamClient(
-                uploadUrl: await generateUploadUrlForTest(
-                  url: tusServerURL,
-                  file: imageFile,
-                ),
-                fileStreamGenerator: () => imageFile.openRead(),
-                fileSize: imageFile.lengthSync(),
-                fileName: p.basename(imageFile.path),
-                chunkSize: imageChunkSize,
-                cache: TusMemoryCache(),
-              ),
-            ),
-        timeout: Timeout(Duration(minutes: 1)));
+      'Image upload to uploadUrl using Tus Stream Client with tus protocol',
+      () async => await genericImageUploadTest(
+        imageFile: imageFile,
+        tusClient: TusStreamClient(
+          uploadUrl: await generateUploadUrlForTest(
+            url: tusServerURL,
+            file: imageFile,
+          ),
+          fileStreamGenerator: () => imageFile.openRead(),
+          fileSize: imageFile.lengthSync(),
+          fileName: p.basename(imageFile.path),
+          chunkSize: imageChunkSize,
+          cache: TusMemoryCache(),
+        ),
+      ),
+      timeout: Timeout(Duration(minutes: 1)),
+    );
 
     test(
-        'Video upload to tusServerURL using Tus Stream Client with tus protocol',
-        () async => await genericVideoUploadTest(
-              videoFile: videoFile,
-              tusClient: TusStreamClient(
-                url: tusServerURL,
-                fileStreamGenerator: () => videoFile.openRead(),
-                fileSize: videoFile.lengthSync(),
-                fileName: p.basename(videoFile.path),
-                chunkSize: videoChunkSize,
-                cache: TusPersistentCache(''),
-              ),
-            ),
-        timeout: Timeout(Duration(minutes: 10)));
+      'Video upload to tusServerURL using Tus Stream Client with tus protocol',
+      () async => await genericVideoUploadTest(
+        videoFile: videoFile,
+        tusClient: TusStreamClient(
+          url: tusServerURL,
+          fileStreamGenerator: () => videoFile.openRead(),
+          fileSize: videoFile.lengthSync(),
+          fileName: p.basename(videoFile.path),
+          chunkSize: videoChunkSize,
+          cache: TusPersistentCache(''),
+        ),
+      ),
+      timeout: Timeout(Duration(minutes: 10)),
+    );
     test(
-        'Video upload to uploadUrl using Tus Stream Client using tus protocol',
-        () async => await genericVideoUploadTest(
-              videoFile: videoFile,
-              tusClient: TusStreamClient(
-                uploadUrl: await generateUploadUrlForTest(
-                  url: tusServerURL,
-                  file: videoFile,
-                ),
-                fileStreamGenerator: () => videoFile.openRead(),
-                fileSize: videoFile.lengthSync(),
-                fileName: p.basename(videoFile.path),
-                chunkSize: videoChunkSize,
-                cache: TusPersistentCache(''),
-              ),
-            ),
-        timeout: Timeout(Duration(minutes: 10)));
+      'Video upload to uploadUrl using Tus Stream Client using tus protocol',
+      () async => await genericVideoUploadTest(
+        videoFile: videoFile,
+        tusClient: TusStreamClient(
+          uploadUrl: await generateUploadUrlForTest(
+            url: tusServerURL,
+            file: videoFile,
+          ),
+          fileStreamGenerator: () => videoFile.openRead(),
+          fileSize: videoFile.lengthSync(),
+          fileName: p.basename(videoFile.path),
+          chunkSize: videoChunkSize,
+          cache: TusPersistentCache(''),
+        ),
+      ),
+      timeout: Timeout(Duration(minutes: 10)),
+    );
   });
 }
 
-Future<void> genericImageUploadTest(
-    {required File imageFile, required TusBaseClient tusClient}) async {
+Future<void> genericImageUploadTest({
+  required File imageFile,
+  required TusBaseClient tusClient,
+}) async {
   if (!imageFile.existsSync()) fail('No image file available to upload');
 
   bool isComplete = false;
@@ -224,38 +232,21 @@ Future<void> genericImageUploadTest(
     }
   }
 
-  final testProgressCallback = expectAsyncUntil3(
-    onProgress,
-    () => isComplete,
-  );
+  final testProgressCallback = expectAsyncUntil3(onProgress, () => isComplete);
   try {
     await tusClient.startUpload(
       onProgress: testProgressCallback,
       onComplete: (response) {
         expect(tusClient.state, TusUploadState.completed);
         print('Response headers: ${headersPrettyPrint(response.headers)}');
-        print(
-          '--------------------------------------------------------------',
-        );
-        print(
-          '--------------------------------------------------------------',
-        );
-        print(
-          '--------------------------------------------------------------',
-        );
-        print(
-          '------------------------Upload completed----------------------',
-        );
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('------------------------Upload completed----------------------');
         print(tusClient.uploadUrl);
-        print(
-          '--------------------------------------------------------------',
-        );
-        print(
-          '--------------------------------------------------------------',
-        );
-        print(
-          '--------------------------------------------------------------',
-        );
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
         isComplete = true;
         testProgressCallback(0, 0, null);
       },
@@ -272,8 +263,10 @@ Future<void> genericImageUploadTest(
   }
 }
 
-Future<void> genericVideoUploadTest(
-    {required File videoFile, required TusBaseClient tusClient}) async {
+Future<void> genericVideoUploadTest({
+  required File videoFile,
+  required TusBaseClient tusClient,
+}) async {
   if (!videoFile.existsSync()) fail('No video file available to upload');
 
   bool isComplete = false;
@@ -289,61 +282,30 @@ Future<void> genericVideoUploadTest(
     }
   }
 
-  final testProgressCallback = expectAsyncUntil3(
-    onProgress,
-    () => isComplete,
-  );
+  final testProgressCallback = expectAsyncUntil3(onProgress, () => isComplete);
   tusClient.startUpload(
     onProgress: testProgressCallback,
     onComplete: (response) {
       print('Response headers: ${headersPrettyPrint(response.headers)}');
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '------------------------Upload completed----------------------',
-      );
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
+      print('------------------------Upload completed----------------------');
       print(tusClient.uploadUrl);
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
       isComplete = true;
       testProgressCallback(0, 0, null);
     },
     onTimeout: () {
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '------------------------Upload request timeout----------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
-      print(
-        '--------------------------------------------------------------',
-      );
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
+      print('------------------------Upload request timeout----------------');
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
+      print('--------------------------------------------------------------');
     },
   );
 

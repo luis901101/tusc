@@ -15,8 +15,10 @@ Types of changes
 - Updated `TusClient` and `TusStreamClient` constructors to accept an optional `uploadUrl`.
 - Added `clear()` method to `TusCache`, `TusMemoryCache`, and `TusPersistentCache`.
 - Improved documentation and code examples in `README.md` and library files.
-- Refactored internal URI parsing and fingerprinting logic.
 - Added comprehensive assertion checks for `url` and `uploadUrl` parameters.
+
+### Changed
+- Updated dart sdk constraints to `sdk: '>=3.10.0 <4.0.0'`
 
 ## 2.1.0
 ### Added

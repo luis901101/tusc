@@ -22,79 +22,77 @@ void main() async {
 }
 
 TusBaseClient initTusClient(XFile file, String uploadURL) => TusClient(
-      /// Required
-      url: uploadURL,
+  /// Required
+  url: uploadURL,
 
-      /// Required
-      file: file,
+  /// Required
+  file: file,
 
-      /// Optional, defaults to 256 KB
-      chunkSize: 5.MB,
+  /// Optional, defaults to 256 KB
+  chunkSize: 5.MB,
 
-      /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
-      tusVersion: Headers.defaultTusVersion,
+  /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
+  tusVersion: Headers.defaultTusVersion,
 
-      /// Optional, defaults to null. See also [TusMemoryCache]
-      cache: TusPersistentCache('/some/path'),
+  /// Optional, defaults to null. See also [TusMemoryCache]
+  cache: TusPersistentCache('/some/path'),
 
-      /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
-      headers: <String, dynamic>{
-        'Authorization':
-            'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig',
-      },
+  /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
+  headers: <String, dynamic>{
+    'Authorization':
+        'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig',
+  },
 
-      /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
-      metadata: <String, dynamic>{
-        'name': 'my-video',
-      },
+  /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
+  metadata: <String, dynamic>{'name': 'my-video'},
 
-      /// Optional, defaults to 30 seconds
-      timeout: Duration(seconds: 10),
+  /// Optional, defaults to 30 seconds
+  timeout: Duration(seconds: 10),
 
-      /// Optional, defaults to http.Client(), use it when you need more control over http requests
-      httpClient: http.Client(),
-    );
+  /// Optional, defaults to http.Client(), use it when you need more control over http requests
+  httpClient: http.Client(),
+);
 
-Future<TusBaseClient> initTusStreamClient(XFile file, String uploadURL) async =>
-    TusStreamClient(
-      /// Required
-      url: uploadURL,
+Future<TusBaseClient> initTusStreamClient(
+  XFile file,
+  String uploadURL,
+) async => TusStreamClient(
+  /// Required
+  url: uploadURL,
 
-      /// Required
-      fileStreamGenerator: () => file.openRead(),
+  /// Required
+  fileStreamGenerator: () => file.openRead(),
 
-      /// Required
-      fileSize: await file.length(),
+  /// Required
+  fileSize: await file.length(),
 
-      /// Required
-      fileName: file.name,
+  /// Required
+  fileName: file.name,
 
-      /// Optional, defaults to 256 KB
-      chunkSize: 5.MB,
+  /// Optional, defaults to 256 KB
+  chunkSize: 5.MB,
 
-      /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
-      tusVersion: Headers.defaultTusVersion,
+  /// Optional, defaults to 1.0.0. Change this only if your tus server uses different version
+  tusVersion: Headers.defaultTusVersion,
 
-      /// Optional, defaults to null. See also [TusMemoryCache]
-      cache: TusPersistentCache('/some/path'),
+  /// Optional, defaults to null. See also [TusMemoryCache]
+  cache: TusPersistentCache('/some/path'),
 
-      /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
-      headers: <String, dynamic>{
-        'Authorization':
-            'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig',
-      },
+  /// Optional, defaults to null. Use it when you need to pass extra headers in request like for authentication
+  headers: <String, dynamic>{
+    'Authorization':
+        'Bearer d843udhq3fkjasdnflkjasdf.hedomiqxh3rx3r23r.8f392zqh3irgqig',
+  },
 
-      /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
-      metadata: <String, dynamic>{
-        'name': 'my-video',
-      },
+  /// Optional, defaults to null. Use it when you need to pass extra data like file name or any other specific business data
+  metadata: <String, dynamic>{'name': 'my-video'},
 
-      /// Optional, defaults to 30 seconds
-      timeout: Duration(seconds: 10),
+  /// Optional, defaults to 30 seconds
+  timeout: Duration(seconds: 10),
 
-      /// Optional, defaults to http.Client(), use it when you need more control over http requests
-      httpClient: http.Client(),
-    );
+  /// Optional, defaults to http.Client(), use it when you need more control over http requests
+  httpClient: http.Client(),
+);
 
 void handleClient(TusBaseClient tusClient) {
   /// Starts the upload

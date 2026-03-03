@@ -117,9 +117,9 @@ class TusStreamClient extends TusBaseClient {
     super.metadata,
     super.timeout,
     super.httpClient,
-  })  : _streamHandler = StreamHandler(fileStreamGenerator),
-        _fileSize = fileSize,
-        _fileName = fileName;
+  }) : _streamHandler = StreamHandler(fileStreamGenerator),
+       _fileSize = fileSize,
+       _fileName = fileName;
 
   @override
   Future<int> get fileSize async => _fileSize;
@@ -136,8 +136,10 @@ class TusStreamClient extends TusBaseClient {
   /// Get data from stream to upload
   @override
   Future<Uint8List> getData() async {
-    final Uint8List chunk =
-        await _streamHandler.read(start: offset, chunkSize: chunkSize);
+    final Uint8List chunk = await _streamHandler.read(
+      start: offset,
+      chunkSize: chunkSize,
+    );
 
     final bytesRead = min(chunkSize, chunk.length);
     offset += bytesRead;

@@ -13,8 +13,8 @@ import 'package:tusc/src/utils/num_utils.dart';
 /// Callback to listen the progress for sending data.
 /// [count] the length of the bytes that have been sent.
 /// [total] the content length.
-typedef ProgressCallback = void Function(
-    int count, int total, http.Response? response);
+typedef ProgressCallback =
+    void Function(int count, int total, http.Response? response);
 
 /// Callback to listen when upload finishes
 typedef CompleteCallback = void Function(http.Response response);
@@ -119,18 +119,20 @@ abstract class TusBaseClient {
     this.metadata,
     Duration? timeout,
     http.Client? httpClient,
-  })  : url = url ?? '',
-        _uploadURI =
-            uploadUrl != null ? Uri.tryParse(uploadUrl) ?? Uri() : Uri(),
-        chunkSize = chunkSize ?? 256.KB,
-        headers = headers?.parseToMapString ?? {},
-        timeout = timeout ?? const Duration(seconds: 30),
-        httpClient = httpClient ?? http.Client(),
-        _state = TusUploadState.notStarted,
-        assert(
-            (url != null && url.isNotEmpty) ||
-                (uploadUrl != null && uploadUrl.isNotEmpty),
-            'Either url or uploadUrl must be provided');
+  }) : url = url ?? '',
+       _uploadURI = uploadUrl != null
+           ? Uri.tryParse(uploadUrl) ?? Uri()
+           : Uri(),
+       chunkSize = chunkSize ?? 256.KB,
+       headers = headers?.parseToMapString ?? {},
+       timeout = timeout ?? const Duration(seconds: 30),
+       httpClient = httpClient ?? http.Client(),
+       _state = TusUploadState.notStarted,
+       assert(
+         (url != null && url.isNotEmpty) ||
+             (uploadUrl != null && uploadUrl.isNotEmpty),
+         'Either url or uploadUrl must be provided',
+       );
 
   /// Get the upload state
   TusUploadState get state => _state;
@@ -280,8 +282,9 @@ abstract class TusBaseClient {
           );
         }
 
-        int? serverOffset =
-            _parseOffset(response.headers[Headers.uploadOffsetHeader]);
+        int? serverOffset = _parseOffset(
+          response.headers[Headers.uploadOffsetHeader],
+        );
         if (serverOffset == null) {
           _state = TusUploadState.error;
           throw ProtocolException(
@@ -352,10 +355,10 @@ abstract class TusBaseClient {
   /// using the same callbacks used last time [upload()] was called.
   /// Throws [ProtocolException] on server error
   Future<void> resumeUpload() => startUpload(
-        onProgress: _onProgress,
-        onComplete: _onComplete,
-        onTimeout: _onTimeout,
-      );
+    onProgress: _onProgress,
+    onComplete: _onComplete,
+    onTimeout: _onTimeout,
+  );
 
   /// Pause the current upload
   Future? pauseUpload() {
@@ -382,8 +385,10 @@ abstract class TusBaseClient {
 
   /// Override this method to customize creating file fingerprint
   String generateFingerprint() =>
-      '$url${fileName != null ? '_$fileName' : ''}_$_fileSize'
-          .replaceAll(RegExp(r'\W+'), '.');
+      '$url${fileName != null ? '_$fileName' : ''}_$_fileSize'.replaceAll(
+        RegExp(r'\W+'),
+        '.',
+      );
 
   /// Override this to customize the header 'Upload-Metadata'
   String generateMetadata() {
@@ -410,8 +415,9 @@ abstract class TusBaseClient {
       );
     }
 
-    int? serverOffset =
-        _parseOffset(response.headers[Headers.uploadOffsetHeader]);
+    int? serverOffset = _parseOffset(
+      response.headers[Headers.uploadOffsetHeader],
+    );
     if (serverOffset == null) {
       _state = TusUploadState.error;
       throw ProtocolException(

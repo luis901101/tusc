@@ -16,7 +16,7 @@ class StreamHandler {
   /// The current offset in the stream, used to track how many bytes have been read.
   int _streamOffset = 0;
   StreamHandler(this.streamGenerator)
-      : _streamIterator = StreamIterator<List<int>>(streamGenerator());
+    : _streamIterator = StreamIterator<List<int>>(streamGenerator());
 
   /// Returns a chunk of bytes from the stream.
   ///
