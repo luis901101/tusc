@@ -67,12 +67,13 @@ class StreamHandler {
     // Advance the stream to the correct offset
     while (offset > _streamOffset && await _streamIterator.moveNext()) {
       final chunk = _streamIterator.current;
+      final chunkStart = _streamOffset;
       _streamOffset += chunk.length;
-      // If the current offset is greater than the requested offset,
-      // then we need to fill the buffer starting at the difference offset,
-      // to ensure the buffer contains the correct bytes.
+      // If this chunk runs past the requested offset, then it holds the first
+      // bytes to be read. Keep only the bytes at or after that offset, so the
+      // buffer starts exactly where the caller asked for.
       if (_streamOffset > offset) {
-        _buffer.add(chunk.sublist(_streamOffset - offset));
+        _buffer.add(chunk.sublist(offset - chunkStart));
       }
     }
   }

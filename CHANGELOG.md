@@ -9,6 +9,21 @@ Types of changes
 - `Fixed` for any bug fixes.
 - `Security` in case of vulnerabilities.
 
+## 4.0.0
+### Changed
+- **Breaking:** an upload with a `cache` set now resumes a previously started upload instead of creating a new one on every `startUpload()`. Override `generateFingerprint()` if your creation `url` is one time or pre signed, such as a Cloudflare Stream direct upload URL, since the default fingerprint is derived from it.
+- The upload URL is now cached on every upload attempt, not only when the upload is created.
+- `cancelUpload()` now always returns a future, which completes once the cancellation and its cache removal have been recorded, and returns `null` only for an already completed upload.
+- Documented on `generateFingerprint()` what the fingerprint has to be stable and unique across.
+
+### Fixed
+- Fixed cached uploads never being read back, so an interrupted upload can now be resumed by a new client instance after an app restart or crash instead of silently starting over from zero.
+- Fixed an upload failing outright when the cached upload URL has expired or was swept server side, which now falls back to creating a new upload.
+- Fixed `TusStreamClient` uploading the wrong bytes when resuming a stream at a non zero offset.
+- Fixed the cache mapping possibly being lost when the process exits right after a chunk lands on the server.
+- Fixed a cancelled upload being resumed where it left off instead of starting over from the beginning.
+- Fixed `pauseUpload()` and `cancelUpload()` being silently ignored when no request was in flight, or when the request in flight completed before they took effect.
+
 ## 3.0.0
 ### Added
 - Added support for resuming uploads using a direct `uploadUrl`, allowing the client to skip the upload creation step without requiring a cache.

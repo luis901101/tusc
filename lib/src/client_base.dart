@@ -61,6 +61,11 @@ typedef ErrorCallback = void Function(ProtocolException error);
 ///   cache: TusPersistentCache(),
 /// );
 /// ```
+///
+/// The cache is keyed by [generateFingerprint], so resuming across sessions
+/// only works if the next client instance produces the very same fingerprint
+/// for the same file. Read [generateFingerprint] before relying on this,
+/// especially if [url] is a one-time or pre-signed creation URL.
 abstract class TusBaseClient {
   /// The base URL of the tus server where uploads will be created.
   /// This is used to send POST requests to create new uploads.
@@ -96,11 +101,21 @@ abstract class TusBaseClient {
   /// Set this if you need to use a custom http client
   final http.Client httpClient;
 
+  /// The size of the file being uploaded, as reported by [fileSize].
+  ///
+  /// Note subclasses declare their own private `_fileSize` field, which is a
+  /// genuinely different field since dart privacy is per library, not per
+  /// class. This one is the one [generateFingerprint] reads, and it is
+  /// populated by awaiting [fileSize].
   int _fileSize = 0;
   String _fingerprint = '';
   String _uploadMetadata = '';
   Uri _uploadURI = Uri();
   int offset = 0;
+
+  /// Set by [cancelUpload] and consumed by the next [_upload]. A cancelled
+  /// upload is abandoned, so the attempt that follows must not resume it.
+  bool _uploadCancelled = false;
   TusUploadState _state;
   Future? _uploadFuture;
   ProgressCallback? _onProgress;
@@ -194,19 +209,42 @@ abstract class TusBaseClient {
 
       _uploadURI = parseToURI(locationURL);
     }
-    cache?.set(_fingerprint, _uploadURI.toString());
+    // Awaited on purpose. The mapping has to be durable before the first chunk
+    // is sent, otherwise a crash right after that chunk lands on the server
+    // leaves an upload that can never be resumed, which is precisely the
+    // scenario this cache exists for.
+    await cache?.set(_fingerprint, _uploadURI.toString());
     _state = TusUploadState.created;
   }
 
-  /// Check if it's possible to resume an already started upload
+  /// Check if it's possible to resume an already started upload.
+  ///
+  /// Returns `true` when an upload URL is already known, either because it was
+  /// supplied through the `uploadUrl` constructor parameter or because [cache]
+  /// holds one for the current [fingerprint].
+  ///
+  /// Resuming requires a [cache], so this returns `false` when none was
+  /// provided, even if an upload URL is already known.
+  ///
+  /// Note this is not a pure predicate. When no upload URL is known yet, the
+  /// one cached for the current [fingerprint], if any, is adopted as this
+  /// client's [uploadUrl]. That side effect is what makes the following
+  /// [startUpload] resume instead of creating a new upload on the server.
+  ///
+  /// The lookup key is [fingerprint], so this is only meaningful once
+  /// [generateFingerprint] has run against the current file size.
+  /// [startUpload] takes care of that before calling this.
   Future<bool> canResume() async {
     if (!resumingEnabled) return false;
 
-    if (uploadUrl.isEmpty) {
-      _uploadURI = Uri.parse(await cache?.get(_fingerprint) ?? '');
-    }
+    if (uploadUrl.isEmpty) await _restoreUploadUrlFromCache();
 
-    return _uploadURI.toString().isNotEmpty;
+    return uploadUrl.isNotEmpty;
+  }
+
+  /// Adopts the upload URL [cache] holds for the current [fingerprint], if any.
+  Future<void> _restoreUploadUrlFromCache() async {
+    _uploadURI = Uri.parse(await cache?.get(_fingerprint) ?? '');
   }
 
   void _notifyError(ProtocolException error) {
@@ -222,12 +260,44 @@ abstract class TusBaseClient {
       _errorMessage = null;
       _fileSize = await fileSize;
 
+      // The fingerprint is the key this upload is stored under in [cache], so
+      // it has to be computed before [canResume] does the lookup. Otherwise a
+      // freshly built client would look the upload up under the fingerprint of
+      // an empty file, always miss, and start over from offset 0.
+      // [generateFingerprint] needs the file size, which is resolved above.
+      _fingerprint = generateFingerprint();
+
+      // A cancelled upload is abandoned, so this attempt has to start a new one
+      // instead of resuming it. The upload URL is dropped here and not in
+      // [cancelUpload] because the chunk loop may still be running when the
+      // cancellation arrives, and pulling the URL from under it would send the
+      // chunk in flight nowhere.
+      if (_uploadCancelled) {
+        _uploadCancelled = false;
+        // With no creation url there is no new upload to fall back on, so the
+        // cancelled one is kept and cancelling only stops it.
+        if (url.isNotEmpty) {
+          _uploadURI = Uri();
+          offset = 0;
+        }
+      }
+
       if (!await canResume()) {
         await createUpload();
       }
 
       // Get offset from server
-      offset = await _getOffset();
+      offset = await _resolveOffset();
+
+      // Cache the mapping on every path that gets this far, not just on newly
+      // created uploads. A client built from an explicit `uploadUrl` never
+      // reaches [createUpload]'s creation branch, yet its upload URL is just as
+      // worth resuming from in a later session. Skipped when the upload was
+      // cancelled while the offset was being resolved, so the entry
+      // [cancelUpload] just removed does not come straight back.
+      if (_state != TusUploadState.cancelled) {
+        await cache?.set(_fingerprint, uploadUrl);
+      }
 
       http.Response? response;
 
@@ -309,7 +379,10 @@ abstract class TusBaseClient {
       if (offset == _fileSize) {
         // Upload completed
         _state = TusUploadState.completed;
-        cache?.remove(_fingerprint);
+        // Awaited so the entry is really gone before the caller is notified and
+        // before this future completes, otherwise a process that exits right
+        // after completion can leave a mapping to an already finished upload.
+        await cache?.remove(_fingerprint);
         _onComplete?.call(response ?? http.Response('', HttpStatus.ok));
       }
     } on ProtocolException catch (e) {
@@ -360,30 +433,122 @@ abstract class TusBaseClient {
     onTimeout: _onTimeout,
   );
 
-  /// Pause the current upload
+  /// Pause the current upload.
+  ///
+  /// The upload is flagged as paused straight away, so the chunk loop stops
+  /// even when no request happens to be in flight at that moment. A following
+  /// [resumeUpload] picks up from the offset the server reports.
+  ///
+  /// The returned future, when a request is in flight, completes as soon as
+  /// that request is given up on, without waiting for its chunk to land. It is
+  /// `null` when nothing is in flight, and when the upload has already
+  /// completed, in which case there is nothing to pause and the upload is left
+  /// alone.
   Future? pauseUpload() {
+    if (_state == TusUploadState.completed) return null;
+    // Set here rather than from the timeout callback below: that callback only
+    // runs if the timer wins the race against the request in flight, and does
+    // not run at all when there is no request to time out.
+    _state = TusUploadState.paused;
     return _uploadFuture?.timeout(
       Duration.zero,
-      onTimeout: () {
-        _state = TusUploadState.paused;
-        return http.Response('', 200, reasonPhrase: 'Upload request paused');
-      },
+      onTimeout: () => http.Response(
+        '',
+        HttpStatus.ok,
+        reasonPhrase: 'Upload request paused',
+      ),
     );
   }
 
-  /// Cancel the current upload
+  /// Cancel the current upload.
+  ///
+  /// Cancelling abandons the upload rather than just stopping it: its [cache]
+  /// entry is dropped and so is its upload URL, so a following [startUpload] or
+  /// [resumeUpload] creates a new upload on the server and starts over from the
+  /// beginning.
+  ///
+  /// A client built from an explicit `uploadUrl`, with no creation [url] to
+  /// POST to, has no new upload to fall back on. Cancelling such a client only
+  /// stops it, and a later resume continues the same upload.
+  ///
+  /// The upload is flagged as cancelled straight away, so the chunk loop stops
+  /// even when no request happens to be in flight at that moment. Note the
+  /// chunk already in flight is not aborted, it still lands on the server.
+  ///
+  /// The returned future completes once the cancellation has been recorded,
+  /// [cache] removal included, so awaiting it is what guarantees the entry is
+  /// really gone. It is `null` when the upload has already completed, in which
+  /// case there is nothing to cancel and the upload is left alone.
   Future? cancelUpload() {
-    return _uploadFuture?.timeout(
-      Duration.zero,
-      onTimeout: () {
-        _state = TusUploadState.cancelled;
-        cache?.remove(_fingerprint);
-        return http.Response('', 200, reasonPhrase: 'Upload request cancelled');
-      },
-    );
+    if (_state == TusUploadState.completed) return null;
+    _state = TusUploadState.cancelled;
+    _uploadCancelled = true;
+    return _recordCancellation();
   }
 
-  /// Override this method to customize creating file fingerprint
+  Future<http.Response> _recordCancellation() async {
+    final cancelledResponse = http.Response(
+      '',
+      HttpStatus.ok,
+      reasonPhrase: 'Upload request cancelled',
+    );
+    // Awaited so that awaiting the returned future guarantees the entry is
+    // gone, instead of racing a process exit against the cache write.
+    await cache?.remove(_fingerprint);
+    final inFlightResponse = await _uploadFuture?.timeout(
+      Duration.zero,
+      onTimeout: () => cancelledResponse,
+    );
+    return inFlightResponse is http.Response
+        ? inFlightResponse
+        : cancelledResponse;
+  }
+
+  /// Builds the key this upload is stored under in [cache].
+  /// Override this method to customize creating the file fingerprint.
+  ///
+  /// The fingerprint is what makes resuming possible, so it must be:
+  ///
+  /// - **Stable** for the same file and the same destination across attempts,
+  ///   app restarts and process crashes. A fingerprint that changes between
+  ///   attempts can never hit the cache, so every attempt creates a brand new
+  ///   upload on the server and restarts from offset 0.
+  /// - **Unique** per file and destination. Two different files sharing a
+  ///   fingerprint make the second one resume into the first one's upload,
+  ///   which produces a corrupt file on the server.
+  ///
+  /// The default is built from [url], [fileName] and the file size, which is
+  /// stable only as long as the creation [url] itself is stable.
+  ///
+  /// ⚠️ It is **not** stable for one-time or pre-signed creation URLs, such as
+  /// a Cloudflare Stream direct upload URL, which embeds a per-request token.
+  /// A new creation URL is requested on every attempt, so the default
+  /// fingerprint changes with it and the cache can never hit. Overriding this
+  /// method is the escape hatch. Derive the fingerprint from the file itself
+  /// plus whatever identifies the destination in your own domain:
+  ///
+  /// ```dart
+  /// class MyTusClient extends TusClient {
+  ///   MyTusClient({
+  ///     required this.videoId,
+  ///     required super.file,
+  ///     super.url,
+  ///     super.cache,
+  ///   });
+  ///
+  ///   final String videoId;
+  ///
+  ///   @override
+  ///   String generateFingerprint() => 'video_${videoId}_${file.path}';
+  /// }
+  /// ```
+  ///
+  /// Note the default says nothing about the file contents, so a file edited in
+  /// place that keeps its name and size keeps its fingerprint too. Include a
+  /// content hash or a last modified timestamp if that is a possibility in your
+  /// app.
+  ///
+  /// Called by [startUpload] and [createUpload] once the file size is known.
   String generateFingerprint() =>
       '$url${fileName != null ? '_$fileName' : ''}_$_fileSize'.replaceAll(
         RegExp(r'\W+'),
@@ -399,6 +564,49 @@ abstract class TusBaseClient {
     }
 
     return meta.parseToMetadata;
+  }
+
+  /// Status codes that mean the upload URL is no longer usable: the server
+  /// either never knew it, has already swept it, or no longer grants access to
+  /// it. In every case there is nothing left to resume from.
+  static const _staleUploadUrlStatusCodes = <int>{
+    HttpStatus.forbidden,
+    HttpStatus.notFound,
+    HttpStatus.gone,
+  };
+
+  /// Gets the current offset from the server, recovering from an upload URL the
+  /// server no longer knows about.
+  ///
+  /// A cached upload URL, or one created in a previous session, can expire or
+  /// be swept server side. The HEAD request in [_getOffset] then fails with one
+  /// of [_staleUploadUrlStatusCodes]. Rather than failing the whole upload, the
+  /// dead URL is dropped from [cache] and a brand new upload is created, so the
+  /// upload restarts instead of hard failing.
+  ///
+  /// The recovery needs a creation [url] to POST to. Without one, which is the
+  /// case for a client built from an explicit `uploadUrl`, the
+  /// [ProtocolException] is rethrown, since the caller asked for that specific
+  /// upload and silently uploading somewhere else is not what they requested.
+  Future<int> _resolveOffset() async {
+    try {
+      return await _getOffset();
+    } on ProtocolException catch (e) {
+      if (!_staleUploadUrlStatusCodes.contains(e.response.statusCode)) rethrow;
+
+      // Only evict the entry that actually points at the dead URL, so a cached
+      // mapping to some other upload is left untouched.
+      if (await cache?.get(_fingerprint) == uploadUrl) {
+        await cache?.remove(_fingerprint);
+      }
+
+      if (url.isEmpty) rethrow;
+
+      _uploadURI = Uri();
+      _errorMessage = null;
+      await createUpload();
+      return await _getOffset();
+    }
   }
 
   /// Get offset from server throwing [ProtocolException] on error

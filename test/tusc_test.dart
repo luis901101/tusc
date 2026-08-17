@@ -334,8 +334,8 @@ Future<void> genericVideoUploadTest({
   });
 
   await Future.delayed(const Duration(seconds: 10), () async {
-    tusClient.cancelUpload();
-    expect(tusClient.state, TusUploadState.uploading);
+    await tusClient.cancelUpload();
+    expect(tusClient.state, TusUploadState.cancelled);
     print('--------------------------------------------------------------');
     print('--------------------------------------------------------------');
     print('--------------------------------------------------------------');

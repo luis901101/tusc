@@ -211,6 +211,41 @@ final tusClient = TusClient(
 ```
 Note that `TusPersistentCache` requires a path, this path will be where the cache storage will take place. This persistent cache implementation works in pure dart so, no matter if you want to use it in a `flutter` project or a `dart` project, it simply works.
 
+### Fingerprints
+
+The cache stores upload URLs keyed by a **fingerprint**, produced by `generateFingerprint()`. Resuming works only if the client that resumes produces the *same* fingerprint as the client that started the upload, so the fingerprint must be:
+
+- **Stable** for the same file and destination across attempts, app restarts and crashes. A fingerprint that changes between attempts never hits the cache, so every attempt creates a new upload on the server and restarts from `0`.
+- **Unique** per file and destination. Two different files sharing a fingerprint make the second one resume into the first one's upload, corrupting it.
+
+The default is built from the creation `url`, the file name and the file size:
+
+```dart
+'$url${fileName != null ? '_$fileName' : ''}_$fileSize'
+```
+
+> ⚠️ **One-time or pre-signed creation URLs break the default.** If your `url` embeds a per-request token — a [Cloudflare Stream direct upload URL](https://developers.cloudflare.com/stream/uploading-videos/direct-creator-uploads/) is the typical case — you request a new one on every attempt, so the fingerprint changes with it and the cache can never hit. Override `generateFingerprint()` with something derived from the file plus whatever identifies the destination in your own domain:
+
+```dart
+class MyTusClient extends TusClient {
+  MyTusClient({
+    required this.videoId,
+    required super.file,
+    super.url,
+    super.cache,
+  });
+
+  final String videoId;
+
+  @override
+  String generateFingerprint() => 'video_${videoId}_${file.path}';
+}
+```
+
+Also note the default says nothing about the file *contents*: a file edited in place that keeps its name and size keeps its fingerprint too. Include a content hash or a last modified timestamp if that can happen in your app.
+
+If the server no longer knows the cached upload URL — it expired or was swept — the client drops the stale entry and creates a new upload instead of failing, as long as it was given a creation `url` to do so.
+
 ### How to set persistent cache in flutter
 You can use [path_provider](https://pub.dev/packages/path_provider) plugin to be able to get the path to a directory where your app has permissions to write.
 [path_provider](https://pub.dev/packages/path_provider) works on most platforms except on web, but this is not a problem, the `TusPersistentCache` takes care of it, you just need to set a `path` and if app is running on web `TusPersistentCache` ignores that `path` and handles the persistent cache under the hook. 
@@ -237,15 +272,23 @@ Future<void> sample() async {
 Pausing upload can be done after current uploading chunk is completed.
 Just by calling: `tusClient.pauseUpload()`
 
+The upload is flagged as paused right away, so it stops even if no request happens to be in flight at that moment. The chunk already in flight is not aborted, it still lands on the server, and the returned future — `null` when nothing is in flight — completes as soon as that request is given up on, without waiting for it.
+
 ### Cancelling upload
 Cancelling upload can be done after current uploading chunk is completed.
 Just by calling: `tusClient.cancelUpload()`
+
+Cancelling **abandons** the upload rather than just stopping it: its cache entry is dropped and so is its upload URL, so a later `startUpload(...)` or `resumeUpload()` creates a new upload on the server and starts over from the beginning. Await the returned future if you need the cache entry to be gone before you move on.
+
+A client built from an explicit `uploadUrl` has no creation `url` to POST to, so it has no new upload to fall back on. Cancelling such a client only stops it, and a later resume continues the same upload.
 
 ### Resuming upload
 For resuming a previously paused upload to take place you should have set a `cache` to the `TusClient` constructor you used when started upload.
 Resuming an upload can be made in two ways:
 - By calling `tusClient.startUpload(...)` again. Take into account by calling `startUpload(...)` again you will lose the reference to the previous callbacks you set in the first call to `startUpload(...)` before the pause. Here you should set the callbacks again as well.
-- By calling `tusClient.resumeUpload()`. With this function `resumeUpload()` the upload is resumed and the callbacks you set in the first call to `startUpload(...)` before pause are used to notify. Note that if you resume an upload previously cancelled, the upload will start from the beginning.
+- By calling `tusClient.resumeUpload()`. With this function `resumeUpload()` the upload is resumed and the callbacks you set in the first call to `startUpload(...)` before pause are used to notify. Note that if you resume an upload previously cancelled, the upload will start from the beginning, since cancelling abandons the upload — unless the client has no creation `url`, as described in [Cancelling upload](#cancelling-upload).
+
+Both `startUpload(...)` and `resumeUpload()` return a future that completes when the upload itself finishes — that is, when it completes, is paused, or is cancelled. Awaiting one of them therefore waits for the whole upload, not just for it to get going.
 
 ### Resuming with `uploadUrl`
 If you stored the upload URL externally (e.g. in a database or shared preferences) you can pass it directly via `uploadUrl` when constructing the client. This lets the client skip the upload creation step and resume from exactly where the previous session left off — no `cache` required.
