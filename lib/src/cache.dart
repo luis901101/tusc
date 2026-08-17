@@ -63,9 +63,10 @@ class TusMemoryCache implements TusCache {
 ///
 /// This cache **will** keep the values after your application crashes or
 /// restarts.
-/// Note the underlying storage is initialized globally, so several instances
-/// pointing at different [path]s in the same process end up sharing the storage
-/// of whichever one was opened first.
+///
+/// Its storage is its own: opening it neither disturbs, nor is disturbed by,
+/// whatever else the host application keeps in the same storage engine, and two
+/// instances over different [path]s stay separate.
 class TusPersistentCache implements TusCache {
   /// Where the cache storage is kept. Ignored on web, where the platform
   /// handles storage itself.
@@ -79,6 +80,20 @@ class TusPersistentCache implements TusCache {
 
   TusPersistentCache(this.path);
 
+  /// The directory this cache's storage lives in, a `tus` subdirectory of
+  /// [path] so nothing of the host application's shares it.
+  String get _storagePath => p.normalize(p.join(path, 'tus'));
+
+  /// The name the storage is opened under.
+  ///
+  /// Derived from the path, because storage is opened by name process wide: two
+  /// caches over different paths asking for the same name are both handed
+  /// whichever was opened first, regardless of the path the second one asked
+  /// for. On web there are no paths to tell apart, so the plain name is used.
+  String get _boxName => isWeb
+      ? 'tus-persistent-cache'
+      : 'tus-persistent-cache-${_hashKeyWithSha1(_storagePath)}';
+
   Future<Box<String>> _openBox() async {
     final pendingBox = _boxFuture ??= _open();
     try {
@@ -90,10 +105,16 @@ class TusPersistentCache implements TusCache {
     }
   }
 
-  Future<Box<String>> _open() async {
-    if (!isWeb) Hive.init(p.join(path, 'tus'));
-    return Hive.openBox<String>('tus-persistent-cache');
-  }
+  Future<Box<String>> _open() => Hive.openBox<String>(
+    _boxName,
+    // Given per box, and deliberately not through `Hive.init`, which sets the
+    // storage directory for the *whole process*. An application using this
+    // package keeps its own data in that storage too, and it opens it when it
+    // needs it rather than all at once — so pointing the process at this cache's
+    // directory sends everything opened from the first upload onwards to the
+    // wrong place, where the data written before it is nowhere to be found.
+    path: isWeb ? null : _storagePath,
+  );
 
   /// Cache a new [fingerprint] and its upload [url].
   @override

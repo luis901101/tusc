@@ -6,8 +6,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:cross_file/cross_file.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:tusc/src/utils/http_status.dart';
 import 'package:tusc/tusc.dart';
@@ -1148,6 +1150,75 @@ void main() {
         'https://tus.example.com/files/abc',
       );
       await reader.clear();
+    });
+
+    test('leaves the storage of the surrounding application alone', () async {
+      // The application using this package keeps its own data in the same
+      // storage engine, and opens it when it needs it rather than all at once.
+      // Setting the process wide storage directory, which is what this cache
+      // used to do, sends everything opened after the first upload to this
+      // cache's directory instead of the application's — where the data written
+      // before it is nowhere to be found.
+      final appDir = Directory.systemTemp.createTempSync('tusc_host_app');
+      addTearDown(() {
+        try {
+          appDir.deleteSync(recursive: true);
+        } on FileSystemException {
+          // Best effort, an open box can keep files locked.
+        }
+      });
+
+      Hive.init(appDir.path);
+      final before = await Hive.openBox<String>('host-app-opened-early');
+      await before.put('key', 'value');
+
+      await TusPersistentCache(
+        tempDir.path,
+      ).set('fingerprint', 'an-upload-url');
+
+      // The box the application opens *after* an upload has started is the one
+      // that used to land in the wrong directory.
+      final after = await Hive.openBox<String>('host-app-opened-late');
+      await after.put('key', 'value');
+
+      expect(
+        File(p.join(appDir.path, 'host-app-opened-late.hive')).existsSync(),
+        isTrue,
+        reason: 'the application asked for its own directory and must get it',
+      );
+      expect(
+        Directory(
+          p.join(tempDir.path, 'tus'),
+        ).listSync().map((entity) => p.basename(entity.path)),
+        isNot(contains('host-app-opened-late.hive')),
+      );
+
+      await before.close();
+      await after.close();
+    });
+
+    test('two caches over different paths do not share storage', () async {
+      // Storage is opened by name process wide, so a name that does not follow
+      // the path hands the second cache whatever the first one opened.
+      final otherDir = Directory.systemTemp.createTempSync('tusc_other_cache');
+      addTearDown(() {
+        try {
+          otherDir.deleteSync(recursive: true);
+        } on FileSystemException {
+          // Best effort, an open box can keep files locked.
+        }
+      });
+
+      await TusPersistentCache(tempDir.path).set('fingerprint', 'first-url');
+      final other = TusPersistentCache(otherDir.path);
+
+      expect(await other.get('fingerprint'), isNull);
+
+      await other.set('fingerprint', 'second-url');
+      expect(
+        await TusPersistentCache(tempDir.path).get('fingerprint'),
+        'first-url',
+      );
     });
   });
 

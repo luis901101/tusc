@@ -145,6 +145,77 @@ void main() {
     expect(second.uploadUrl, isNot(first.uploadUrl));
   });
 
+  group('TusPersistentCache', () {
+    // The path is meaningless in a browser, where storage is handled by the
+    // platform, so it is only there to satisfy the constructor.
+    tearDown(() => TusPersistentCache('').clear());
+
+    test('works over the browser storage', () async {
+      final cache = TusPersistentCache('');
+
+      await cache.set('fingerprint', 'https://example.com/files/abc');
+      expect(await cache.get('fingerprint'), 'https://example.com/files/abc');
+
+      await cache.remove('fingerprint');
+      expect(await cache.get('fingerprint'), isNull);
+    });
+
+    test('a write is readable through another instance', () async {
+      await TusPersistentCache('').set('fingerprint', 'https://example.com/x');
+
+      expect(
+        await TusPersistentCache('').get('fingerprint'),
+        'https://example.com/x',
+        reason:
+            'a browser has no paths to tell caches apart, so they all '
+            'share the one storage',
+      );
+    });
+
+    test('concurrent access opens the storage once', () async {
+      final cache = TusPersistentCache('');
+
+      await expectLater(
+        Future.wait([
+          cache.set('a', 'url-a'),
+          cache.get('a'),
+          cache.set('b', 'url-b'),
+          cache.get('b'),
+        ]),
+        completes,
+      );
+      expect(await cache.get('a'), 'url-a');
+    });
+
+    test('resuming an upload across client instances works', () async {
+      final cache = TusPersistentCache('');
+      final server = buildServer();
+      var created = 0;
+
+      TusStreamClient build() => TusStreamClient(
+        url: createEndpoint,
+        fileStreamGenerator: () => Stream.value(fileBytes),
+        fileSize: fileSize,
+        fileName: 'video-test.mp4',
+        chunkSize: chunkSize,
+        cache: cache,
+        retryDelays: const [],
+        httpClient: server,
+      );
+
+      final first = build();
+      await first.startUpload();
+      created++;
+
+      final second = build();
+      await second.startUpload();
+      created++;
+
+      expect(created, 2);
+      expect(second.state, TusUploadState.completed);
+    });
+  });
+
   test('close does not throw on the browser client', () {
     final client = TusClient(
       url: createEndpoint,

@@ -39,6 +39,8 @@ Types of changes
 - Fixed `pauseUpload()` and `cancelUpload()` being silently ignored when no request was in flight, or when the request in flight completed before they took effect.
 - Fixed `TusPersistentCache` throwing a `LateInitializationError` when two calls opened its storage at the same time.
 - Fixed `TusPersistentCache` not waiting for writes and deletes to reach the disk.
+- Fixed `TusPersistentCache` setting the storage directory of the whole process, which sent every box the surrounding application opened after its first upload to the cache's directory instead of its own.
+- Fixed two `TusPersistentCache` instances over different paths sharing the storage of whichever one was opened first.
 - Fixed an upload whose source ran out of data early finishing silently, reporting neither an error nor completion.
 - Fixed `generateMetadata()` writing `filename` into the caller's `metadata` map, which also made a `const` map throw.
 - Fixed `pauseUpload()` and `cancelUpload()` rethrowing the error of a request that had already failed.
