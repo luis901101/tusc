@@ -37,15 +37,22 @@ void main() {
     }
   });
 
-  TusClient buildClient({TusCache? cache, String? url, String? uploadUrl}) =>
-      TusClient(
-        url: url,
-        uploadUrl: uploadUrl,
-        file: XFile(file.path),
-        chunkSize: chunkSize,
-        cache: cache,
-        httpClient: server.client,
-      );
+  /// Retries are off unless a test asks for them, so the tests that fail on
+  /// purpose fail straight away instead of waiting out the default delays.
+  TusClient buildClient({
+    TusCache? cache,
+    String? url,
+    String? uploadUrl,
+    List<Duration> retryDelays = const [],
+  }) => TusClient(
+    url: url,
+    uploadUrl: uploadUrl,
+    file: XFile(file.path),
+    chunkSize: chunkSize,
+    cache: cache,
+    retryDelays: retryDelays,
+    httpClient: server.client,
+  );
 
   /// Runs an upload that dies after [failAfterBytes] bytes have landed on the
   /// server, standing in for a crashed or killed process, and returns the
@@ -117,6 +124,7 @@ void main() {
           fileName: 'video-test.mp4',
           chunkSize: chunkSize,
           cache: cache,
+          retryDelays: const [],
           httpClient: server.client,
         );
 
@@ -269,6 +277,7 @@ void main() {
           file: XFile(file.path),
           chunkSize: chunkSize,
           cache: cache,
+          retryDelays: const [],
           httpClient: server.client,
         );
 
@@ -492,6 +501,7 @@ void main() {
           fileName: 'video-test.mp4',
           chunkSize: chunkSize,
           cache: cache,
+          retryDelays: const [],
           httpClient: server.client,
         );
 
@@ -561,6 +571,494 @@ void main() {
     });
   });
 
+  group('Retrying', () {
+    const fastRetries = [Duration.zero, Duration.zero, Duration.zero];
+
+    test(
+      'a transient server error is retried and the upload finishes',
+      () async {
+        final client = buildClient(
+          cache: TusMemoryCache(),
+          url: createEndpoint,
+          retryDelays: fastRetries,
+        );
+        server
+          ..failNextPatches = 2
+          ..patchFailure = HttpStatus.serviceUnavailable;
+
+        await client.startUpload();
+
+        expect(client.state, TusUploadState.completed);
+        expect(server.bytesOf(client.uploadUrl), fileBytes);
+      },
+    );
+
+    test('a transport failure is retried', () async {
+      final client = buildClient(
+        cache: TusMemoryCache(),
+        url: createEndpoint,
+        retryDelays: fastRetries,
+      );
+      // A null failure throws a ClientException, which is how package:http
+      // reports a dropped connection.
+      server
+        ..failNextPatches = 1
+        ..patchFailure = null;
+
+      await client.startUpload();
+
+      expect(client.state, TusUploadState.completed);
+      expect(server.bytesOf(client.uploadUrl), fileBytes);
+    });
+
+    test('retrying re-reads the offset instead of resending a chunk', () async {
+      final client = buildClient(
+        cache: TusMemoryCache(),
+        url: createEndpoint,
+        retryDelays: fastRetries,
+      );
+      server
+        ..failNextPatches = 1
+        ..patchFailure = HttpStatus.badGateway;
+
+      await client.startUpload();
+
+      expect(
+        server.bytesOf(client.uploadUrl),
+        fileBytes,
+        reason: 'a retry must not duplicate or skip any bytes',
+      );
+      expect(
+        server.requestLog.where((entry) => entry.startsWith('HEAD')).length,
+        2,
+        reason: 'the offset has to be re-read from the server before retrying',
+      );
+    });
+
+    test('a stream source is rewound before a retry', () async {
+      final client = TusStreamClient(
+        url: createEndpoint,
+        fileStreamGenerator: () => file.openRead(),
+        fileSize: fileSize,
+        fileName: 'video-test.mp4',
+        chunkSize: chunkSize,
+        retryDelays: fastRetries,
+        httpClient: server.client,
+      );
+      server
+        ..failNextPatches = 1
+        ..patchFailure = HttpStatus.serviceUnavailable;
+
+      await client.startUpload();
+
+      expect(
+        server.bytesOf(client.uploadUrl),
+        fileBytes,
+        reason:
+            'a stream that already handed out a chunk that never landed '
+            'has to start over rather than carry on from where it was',
+      );
+    });
+
+    test('retries run out and the error is reported', () async {
+      final client = buildClient(
+        cache: TusMemoryCache(),
+        url: createEndpoint,
+        retryDelays: const [Duration.zero],
+      );
+      server
+        ..failNextPatches = 5
+        ..patchFailure = HttpStatus.serviceUnavailable;
+
+      await expectLater(
+        client.startUpload(),
+        throwsA(isA<ProtocolException>()),
+      );
+      expect(client.state, TusUploadState.error);
+    });
+
+    test('a client error is not retried', () async {
+      final client = buildClient(
+        cache: TusMemoryCache(),
+        url: createEndpoint,
+        retryDelays: fastRetries,
+      );
+      server
+        ..failNextPatches = 1
+        ..patchFailure = HttpStatus.badRequest;
+
+      await expectLater(
+        client.startUpload(),
+        throwsA(isA<ProtocolException>()),
+      );
+      expect(
+        server.requestLog.where((entry) => entry.startsWith('HEAD')).length,
+        1,
+        reason: 'a 400 will not go away by asking again',
+      );
+    });
+
+    test('a pause racing a retryable failure is honoured', () async {
+      final client = buildClient(
+        cache: TusMemoryCache(),
+        url: createEndpoint,
+        retryDelays: fastRetries,
+      );
+      // The pause lands while the chunk that is about to fail is in flight.
+      var paused = false;
+      server.beforeRespond = (method, uploadUrl) async {
+        if (method == 'PATCH' &&
+            server.offsetOf(uploadUrl) == 2 * chunkSize &&
+            !paused) {
+          paused = true;
+          client.pauseUpload();
+          server
+            ..failNextPatches = 1
+            ..patchFailure = HttpStatus.serviceUnavailable;
+        }
+      };
+
+      // The failure of the request that was in flight is not worth reporting:
+      // the caller had already asked to stop.
+      await expectLater(client.startUpload(), completes);
+
+      expect(
+        client.state,
+        TusUploadState.paused,
+        reason: 'a retry must not carry a paused upload on regardless',
+      );
+      expect(client.offset, 2 * chunkSize);
+      expect(server.offsetOf(client.uploadUrl), lessThan(fileSize));
+
+      // And the pause is a pause, not a dead end.
+      await client.resumeUpload();
+      expect(client.state, TusUploadState.completed);
+      expect(server.bytesOf(client.uploadUrl), fileBytes);
+    });
+
+    test('a cancel racing a retryable failure is honoured', () async {
+      final client = buildClient(
+        cache: TusMemoryCache(),
+        url: createEndpoint,
+        retryDelays: fastRetries,
+      );
+      var cancelled = false;
+      server.beforeRespond = (method, uploadUrl) async {
+        if (method == 'PATCH' &&
+            server.offsetOf(uploadUrl) == 2 * chunkSize &&
+            !cancelled) {
+          cancelled = true;
+          client.cancelUpload();
+          server
+            ..failNextPatches = 1
+            ..patchFailure = HttpStatus.serviceUnavailable;
+        }
+      };
+
+      await expectLater(client.startUpload(), completes);
+
+      expect(client.state, TusUploadState.cancelled);
+      expect(server.offsetOf(client.uploadUrl), lessThan(fileSize));
+    });
+  });
+
+  group('Upload length verification', () {
+    test(
+      'an upload created for a different file is not resumed into',
+      () async {
+        final cache = TusMemoryCache();
+        final firstClient = buildClient(cache: cache, url: createEndpoint);
+        final otherFileUploadUrl = await uploadUntilItDies(
+          firstClient,
+          failAfterBytes: 3 * chunkSize,
+        );
+
+        // Same fingerprint, but the server says that upload is for a file of a
+        // different size, so it cannot be the one this client is uploading.
+        server.reportLength(otherFileUploadUrl, fileSize * 2);
+
+        final secondClient = buildClient(cache: cache, url: createEndpoint);
+        await secondClient.startUpload();
+
+        expect(
+          server.createCount,
+          2,
+          reason:
+              'resuming into an upload of a different length would corrupt '
+              'it, so a new upload has to be created instead',
+        );
+        expect(secondClient.uploadUrl, isNot(otherFileUploadUrl));
+        expect(server.bytesOf(secondClient.uploadUrl), fileBytes);
+        expect(
+          server.bytesOf(otherFileUploadUrl),
+          hasLength(3 * chunkSize),
+          reason: 'the other upload must be left untouched',
+        );
+      },
+    );
+
+    test('a mismatch with no creation url is reported', () async {
+      final firstClient = buildClient(url: createEndpoint);
+      final uploadUrl = await uploadUntilItDies(
+        firstClient,
+        failAfterBytes: 3 * chunkSize,
+      );
+      server.reportLength(uploadUrl, fileSize * 2);
+
+      final secondClient = buildClient(uploadUrl: uploadUrl);
+      await expectLater(
+        secondClient.startUpload(),
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.response,
+            'response',
+            isNull,
+          ),
+        ),
+      );
+      expect(server.createCount, 1);
+    });
+
+    test('a server that omits Upload-Length is still resumed from', () async {
+      final cache = TusMemoryCache();
+      final firstClient = buildClient(cache: cache, url: createEndpoint);
+      final uploadUrl = await uploadUntilItDies(
+        firstClient,
+        failAfterBytes: 3 * chunkSize,
+      );
+      server.reportLength(uploadUrl, null);
+
+      final secondClient = buildClient(cache: cache, url: createEndpoint);
+      await secondClient.startUpload();
+
+      expect(server.createCount, 1);
+      expect(secondClient.uploadUrl, uploadUrl);
+    });
+  });
+
+  group('Failure handling', () {
+    test('a source shorter than the declared size fails loudly', () async {
+      final client = TusStreamClient(
+        url: createEndpoint,
+        // Declares 10240 bytes but only ever yields 4096.
+        fileStreamGenerator: () => Stream.value(fileBytes.sublist(0, 4096)),
+        fileSize: fileSize,
+        fileName: 'truncated.bin',
+        chunkSize: chunkSize,
+        retryDelays: const [],
+        httpClient: server.client,
+      );
+
+      await expectLater(
+        client.startUpload(),
+        throwsA(
+          isA<ProtocolException>()
+              .having((e) => e.response, 'response', isNull)
+              .having((e) => e.message, 'message', contains('ran out of data')),
+        ),
+      );
+      expect(client.state, TusUploadState.error);
+      expect(client.errorMessage, contains('ran out of data'));
+    });
+
+    test('cancelling after a transport failure does not rethrow it', () async {
+      final client = buildClient(cache: TusMemoryCache(), url: createEndpoint);
+      server
+        ..failNextPatches = 1
+        ..patchFailure = null;
+
+      await expectLater(
+        client.startUpload(),
+        throwsA(isA<http.ClientException>()),
+      );
+
+      // Must not surface the long dead request's error.
+      await expectLater(client.cancelUpload(), completes);
+      await expectLater(client.pauseUpload() ?? Future.value(), completes);
+    });
+
+    test('resumeUpload keeps delivering errors to onError', () async {
+      final client = buildClient(cache: TusMemoryCache(), url: createEndpoint);
+
+      final errors = <ProtocolException>[];
+      server
+        ..failNextPatches = 1
+        ..patchFailure = HttpStatus.badRequest;
+      await client.startUpload(onError: errors.add);
+      expect(errors, hasLength(1));
+
+      server
+        ..failNextPatches = 1
+        ..patchFailure = HttpStatus.badRequest;
+      await client.resumeUpload();
+
+      expect(
+        errors,
+        hasLength(2),
+        reason: 'resumeUpload must forward onError like every other callback',
+      );
+    });
+
+    test('a second concurrent upload is rejected', () async {
+      final client = buildClient(cache: TusMemoryCache(), url: createEndpoint);
+
+      final first = client.startUpload();
+      await expectLater(client.startUpload(), throwsA(isA<StateError>()));
+      await first;
+
+      expect(client.state, TusUploadState.completed);
+      expect(server.bytesOf(client.uploadUrl), fileBytes);
+      expect(
+        server.requestLog.where((entry) => entry.startsWith('PATCH')).length,
+        fileSize ~/ chunkSize,
+        reason: 'exactly one loop must have run',
+      );
+    });
+
+    test('a new upload can start once the previous one is done', () async {
+      final client = buildClient(url: createEndpoint);
+      await client.startUpload();
+      await expectLater(client.startUpload(), completes);
+    });
+  });
+
+  group('Client hygiene', () {
+    test('metadata given by the caller is left alone', () {
+      final callerMetadata = <String, dynamic>{'name': 'my-video'};
+      final client = buildClient(url: createEndpoint);
+      final withMetadata = TusClient(
+        url: createEndpoint,
+        file: XFile(file.path, name: 'video-test.mp4'),
+        metadata: callerMetadata,
+        httpClient: server.client,
+      );
+
+      withMetadata.generateMetadata();
+
+      expect(callerMetadata, {
+        'name': 'my-video',
+      }, reason: 'the map belongs to the caller');
+      expect(client.generateMetadata(), isNotEmpty);
+    });
+
+    test('a const metadata map is accepted', () {
+      final client = TusClient(
+        url: createEndpoint,
+        file: XFile(file.path, name: 'video-test.mp4'),
+        metadata: const <String, dynamic>{'name': 'my-video'},
+        httpClient: server.client,
+      );
+
+      expect(client.generateMetadata, returnsNormally);
+      expect(client.generateMetadata(), contains('filename'));
+    });
+
+    test('close disposes only a client it created', () {
+      final callerClient = _ClosableClient(server.client);
+      final withCallerClient = TusClient(
+        url: createEndpoint,
+        file: XFile(file.path),
+        httpClient: callerClient,
+      );
+
+      withCallerClient.close();
+
+      expect(
+        callerClient.closed,
+        isFalse,
+        reason: 'a caller supplied http client may still be in use elsewhere',
+      );
+      // A client that made its own has nothing observable to assert on beyond
+      // not throwing.
+      expect(
+        TusClient(url: createEndpoint, file: XFile(file.path)).close,
+        returnsNormally,
+      );
+    });
+
+    test('chunkSize must be positive', () {
+      expect(
+        () => TusClient(
+          url: createEndpoint,
+          file: XFile(file.path),
+          chunkSize: 0,
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+    });
+
+    test('offset only counts bytes the server confirmed', () async {
+      final client = buildClient(url: createEndpoint);
+      server
+        ..failNextPatches = 1
+        ..patchFailure = HttpStatus.badRequest;
+
+      await expectLater(
+        client.startUpload(),
+        throwsA(isA<ProtocolException>()),
+      );
+
+      expect(
+        client.offset,
+        0,
+        reason: 'the chunk was read but never landed, so it does not count',
+      );
+    });
+
+    test('a relative Location is resolved against the creation url', () {
+      final client = TusClient(
+        url: 'https://tus.example.com/files/',
+        file: XFile(file.path),
+        httpClient: server.client,
+      );
+
+      expect(
+        client.parseToURI('abc123').toString(),
+        'https://tus.example.com/files/abc123',
+      );
+      expect(
+        client.parseToURI('/other/abc123').toString(),
+        'https://tus.example.com/other/abc123',
+      );
+      expect(
+        client.parseToURI('https://cdn.example.com/abc123').toString(),
+        'https://cdn.example.com/abc123',
+      );
+    });
+  });
+
+  group('TusPersistentCache', () {
+    test('concurrent access opens the storage once', () async {
+      final cache = TusPersistentCache(tempDir.path);
+
+      await expectLater(
+        Future.wait([
+          cache.set('a', 'url-a'),
+          cache.get('a'),
+          cache.set('b', 'url-b'),
+          cache.get('b'),
+        ]),
+        completes,
+      );
+
+      expect(await cache.get('a'), 'url-a');
+      expect(await cache.get('b'), 'url-b');
+      await cache.clear();
+    });
+
+    test('a write is readable through another instance right away', () async {
+      final writer = TusPersistentCache(tempDir.path);
+      await writer.set('fingerprint', 'https://tus.example.com/files/abc');
+
+      final reader = TusPersistentCache(tempDir.path);
+      expect(
+        await reader.get('fingerprint'),
+        'https://tus.example.com/files/abc',
+      );
+      await reader.clear();
+    });
+  });
+
   group('Fingerprint', () {
     test('is computed before the cache is looked up', () async {
       final cache = _RecordingCache();
@@ -611,6 +1109,7 @@ void main() {
               file: XFile(file.path),
               chunkSize: chunkSize,
               cache: cache,
+              retryDelays: const [],
               httpClient: server.client,
             );
 
@@ -631,6 +1130,24 @@ void main() {
   });
 }
 
+/// Records whether it was closed, to check [TusBaseClient.close] ownership.
+class _ClosableClient extends http.BaseClient {
+  bool closed = false;
+  final http.Client _inner;
+
+  _ClosableClient(this._inner);
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) =>
+      _inner.send(request);
+
+  @override
+  void close() {
+    closed = true;
+    _inner.close();
+  }
+}
+
 /// A [TusClient] whose fingerprint does not depend on the creation url, which
 /// is what a one time or pre signed creation url requires.
 class _StableFingerprintClient extends TusClient {
@@ -640,6 +1157,7 @@ class _StableFingerprintClient extends TusClient {
     super.uploadUrl,
     super.chunkSize,
     super.cache,
+    super.retryDelays,
     super.httpClient,
   });
 
@@ -675,9 +1193,18 @@ class _FakeTusServer {
   /// Upload URL to the bytes stored for it.
   final Map<String, BytesBuilder> _uploads = {};
 
+  /// Upload URL to the total length declared when it was created, which is what
+  /// a HEAD reports back as `Upload-Length`.
+  final Map<String, int> _lengths = {};
+
   /// Upload URLs the server no longer serves, to the status code it answers
   /// with, simulating an expired or swept upload.
   final Map<String, int> _swept = {};
+
+  /// Fails the next [failNextPatches] PATCH requests with [patchFailure], to
+  /// exercise retrying. A `null` failure drops the connection instead.
+  int failNextPatches = 0;
+  int? patchFailure;
 
   /// When set, an upload stops accepting chunks once this many bytes have
   /// landed, simulating a dropped connection or a killed process.
@@ -703,6 +1230,17 @@ class _FakeTusServer {
     _swept[uploadUrl] = statusCode;
   }
 
+  /// Makes [uploadUrl] report a different total length, as if it had been
+  /// created for another file. A `null` length stops it reporting the header at
+  /// all, which the protocol allows.
+  void reportLength(String uploadUrl, int? length) {
+    if (length == null) {
+      _lengths.remove(uploadUrl);
+    } else {
+      _lengths[uploadUrl] = length;
+    }
+  }
+
   Future<http.Response> _handle(http.Request request) async {
     final method = request.method;
     final uploadUrl = request.url.toString();
@@ -713,6 +1251,9 @@ class _FakeTusServer {
       createCount++;
       final createdUploadUrl = '$createEndpoint/upload-${_nextId++}';
       _uploads[createdUploadUrl] = BytesBuilder();
+      _lengths[createdUploadUrl] = int.parse(
+        request.headers[Headers.uploadLengthHeader]!,
+      );
       return http.Response(
         '',
         HttpStatus.created,
@@ -731,9 +1272,21 @@ class _FakeTusServer {
         return http.Response(
           '',
           HttpStatus.ok,
-          headers: {Headers.uploadOffsetHeader: '${upload.length}'},
+          headers: {
+            Headers.uploadOffsetHeader: '${upload.length}',
+            if (_lengths[uploadUrl] != null)
+              Headers.uploadLengthHeader: '${_lengths[uploadUrl]}',
+          },
         );
       case 'PATCH':
+        if (failNextPatches > 0) {
+          failNextPatches--;
+          final failure = patchFailure;
+          if (failure == null) {
+            throw http.ClientException('connection reset', request.url);
+          }
+          return http.Response('', failure);
+        }
         final failAfter = failAfterBytes;
         if (failAfter != null && upload.length >= failAfter) {
           return http.Response('', HttpStatus.internalServerError);

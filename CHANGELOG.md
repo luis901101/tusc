@@ -10,11 +10,23 @@ Types of changes
 - `Security` in case of vulnerabilities.
 
 ## 4.0.0
+### Added
+- Added `retryDelays` to retry a request that failed on a transport error or on 408, 429 or a 5xx, defaulting to three retries after 1, 3 and 5 seconds; pass an empty list to keep failing on the first error.
+- Added `close()` to dispose of the internally created `httpClient`.
+- Added a check of the server's `Upload-Length` when resuming, so an upload belonging to a different file is replaced by a new one instead of being corrupted.
+- Added `ProtocolException.statusCode` as a shorthand for `response?.statusCode`.
+- Added `resetSource()`, called before a retry so a source that cannot be read backwards can start over.
+
 ### Changed
 - **Breaking:** an upload with a `cache` set now resumes a previously started upload instead of creating a new one on every `startUpload()`. Override `generateFingerprint()` if your creation `url` is one time or pre signed, such as a Cloudflare Stream direct upload URL, since the default fingerprint is derived from it.
 - The upload URL is now cached on every upload attempt, not only when the upload is created.
 - `cancelUpload()` now always returns a future, which completes once the cancellation and its cache removal have been recorded, and returns `null` only for an already completed upload.
 - Documented on `generateFingerprint()` what the fingerprint has to be stable and unique across.
+- **Breaking:** `ProtocolException.response` is now nullable, since a failure that did not come from a server response has none to report. Replace `e.response.statusCode` with `e.statusCode`, and `e.response.x` with `e.response?.x`.
+- **Breaking:** `offset` is now read only and maintained from what the server confirms. A `getData()` override must no longer advance it.
+- **Breaking:** `startUpload()` throws a `StateError` when an upload is already running on the same client, instead of starting a second loop that fights the first one for the offset.
+- A `Location` response header is now resolved against the creation `url` following RFC 3986, so a path relative one no longer loses the base path.
+- `chunkSize` is now asserted to be greater than 0.
 
 ### Fixed
 - Fixed cached uploads never being read back, so an interrupted upload can now be resumed by a new client instance after an app restart or crash instead of silently starting over from zero.
@@ -23,6 +35,12 @@ Types of changes
 - Fixed the cache mapping possibly being lost when the process exits right after a chunk lands on the server.
 - Fixed a cancelled upload being resumed where it left off instead of starting over from the beginning.
 - Fixed `pauseUpload()` and `cancelUpload()` being silently ignored when no request was in flight, or when the request in flight completed before they took effect.
+- Fixed `TusPersistentCache` throwing a `LateInitializationError` when two calls opened its storage at the same time.
+- Fixed `TusPersistentCache` not waiting for writes and deletes to reach the disk.
+- Fixed an upload whose source ran out of data early finishing silently, reporting neither an error nor completion.
+- Fixed `generateMetadata()` writing `filename` into the caller's `metadata` map, which also made a `const` map throw.
+- Fixed `pauseUpload()` and `cancelUpload()` rethrowing the error of a request that had already failed.
+- Fixed `resumeUpload()` dropping the `onError` callback, so errors were thrown instead of delivered after a resume.
 
 ## 3.0.0
 ### Added

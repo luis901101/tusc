@@ -244,6 +244,8 @@ class MyTusClient extends TusClient {
 
 Also note the default says nothing about the file *contents*: a file edited in place that keeps its name and size keeps its fingerprint too. Include a content hash or a last modified timestamp if that can happen in your app.
 
+As a backstop, the client compares the server's `Upload-Length` against the size of the file being uploaded when it resumes. If they differ, the cached upload belongs to a different file, so it is dropped and a new upload is created rather than corrupting the other one.
+
 If the server no longer knows the cached upload URL — it expired or was swept — the client drops the stale entry and creates a new upload instead of failing, as long as it was given a creation `url` to do so.
 
 ### How to set persistent cache in flutter
@@ -267,6 +269,35 @@ Future<void> sample() async {
 }
 
 ```
+
+### Retrying
+
+A request that fails on a transport error — a dropped connection, DNS, TLS — or because the server responded `408`, `429` or a `5xx`, is retried according to `retryDelays`. The default is three retries, after 1, 3 and 5 seconds:
+
+```dart
+final tusClient = TusClient(
+  url: tusServerURL,
+  file: file,
+  /// Optional. Defaults to [1s, 3s, 5s]. Pass an empty list to fail on the first error.
+  retryDelays: const [Duration(seconds: 2), Duration(seconds: 10)],
+);
+```
+
+Each retry re-reads the offset from the server before sending anything, so a chunk that landed just before the failure is never sent twice. A `4xx` other than those above is not retried — asking again will not change the answer.
+
+`pauseUpload()` and `cancelUpload()` stop retrying. If the request in flight fails right as you stop the upload, that failure is neither retried nor reported: you already asked it to stop.
+
+`TusStreamClient` cannot read its stream backwards, so a retry calls `fileStreamGenerator` again and reads forward to the server's offset. A stream that cannot be recreated therefore cannot be retried; see [`fileStreamGenerator`](#tus-stream-client) for the options there.
+
+### Releasing the client
+
+`close()` disposes of the `http.Client` the client created for itself. One passed in through `httpClient` belongs to you and is left open.
+
+```dart
+tusClient.close();
+```
+
+It does not stop a running upload — pause or cancel first, and await the future of the running `startUpload(...)`.
 
 ### Pausing upload
 Pausing upload can be done after current uploading chunk is completed.

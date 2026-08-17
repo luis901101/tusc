@@ -41,6 +41,7 @@ class TusClient extends TusBaseClient {
     super.headers,
     super.metadata,
     super.timeout,
+    super.retryDelays,
     super.httpClient,
   });
 
@@ -61,9 +62,6 @@ class TusClient extends TusBaseClient {
     await for (final chunk in file.openRead(start, end)) {
       result.add(chunk);
     }
-
-    final bytesRead = min(chunkSize, result.length);
-    offset += bytesRead;
 
     return result.takeBytes();
   }

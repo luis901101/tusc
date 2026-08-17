@@ -252,10 +252,15 @@ Future<void> genericImageUploadTest({
       },
     );
   } on ProtocolException catch (e) {
-    print('Response status code: ${e.response.statusCode}');
-    print('Response status reasonPhrase: ${e.response.reasonPhrase}');
-    print('Response body: ${e.response.body}');
-    print('Response headers: ${headersPrettyPrint(e.response.headers)}');
+    final response = e.response;
+    print('Error message: ${e.message}');
+    print('Response status code: ${response?.statusCode}');
+    print('Response status reasonPhrase: ${response?.reasonPhrase}');
+    print('Response body: ${response?.body}');
+    print(
+      'Response headers: '
+      '${response == null ? null : headersPrettyPrint(response.headers)}',
+    );
     rethrow;
   } catch (e) {
     print(e);

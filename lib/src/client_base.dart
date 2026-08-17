@@ -98,8 +98,32 @@ abstract class TusBaseClient {
   /// Default value: 30 seconds
   final Duration timeout;
 
-  /// Set this if you need to use a custom http client
+  /// How long to wait before each retry of a failed request.
+  ///
+  /// A request that fails because of a transport error, such as a connection
+  /// reset, or because the server responded 408, 429 or a 5xx, is tried again
+  /// after the next delay in this list. Every retry re-reads the offset from
+  /// the server first, so a chunk that landed just before the failure is not
+  /// sent twice.
+  ///
+  /// The length of the list is the number of retries. The default retries three
+  /// times, after 1, 3 and 5 seconds. Pass an empty list to fail on the first
+  /// error instead.
+  ///
+  /// [pauseUpload] and [cancelUpload] stop retrying: the caller asked the
+  /// upload to stop, so the failure of the request that was in flight is not
+  /// retried and not reported either.
+  final List<Duration> retryDelays;
+
+  /// Set this if you need to use a custom http client.
+  ///
+  /// A client passed in here belongs to the caller, so [close] leaves it alone.
+  /// When none is given one is created internally and [close] disposes of it.
   final http.Client httpClient;
+
+  /// Whether [httpClient] was created here rather than supplied by the caller,
+  /// and is therefore this client's to close.
+  final bool _ownsHttpClient;
 
   /// The size of the file being uploaded, as reported by [fileSize].
   ///
@@ -111,11 +135,22 @@ abstract class TusBaseClient {
   String _fingerprint = '';
   String _uploadMetadata = '';
   Uri _uploadURI = Uri();
-  int offset = 0;
+  int _offset = 0;
 
   /// Set by [cancelUpload] and consumed by the next [_upload]. A cancelled
   /// upload is abandoned, so the attempt that follows must not resume it.
   bool _uploadCancelled = false;
+
+  /// The state the caller asked this upload to stop in, set by [pauseUpload]
+  /// and [cancelUpload] and cleared by [startUpload].
+  ///
+  /// Kept apart from [_state] because a failing request overwrites the state
+  /// with [TusUploadState.error], which would otherwise hide the fact that a
+  /// stop was asked for and let a retry carry the upload on regardless.
+  TusUploadState? _requestedStop;
+
+  /// The upload currently running, used to reject a second concurrent one.
+  Future<void>? _activeUpload;
   TusUploadState _state;
   Future? _uploadFuture;
   ProgressCallback? _onProgress;
@@ -133,6 +168,7 @@ abstract class TusBaseClient {
     Map<String, dynamic>? headers,
     this.metadata,
     Duration? timeout,
+    List<Duration>? retryDelays,
     http.Client? httpClient,
   }) : url = url ?? '',
        _uploadURI = uploadUrl != null
@@ -141,16 +177,37 @@ abstract class TusBaseClient {
        chunkSize = chunkSize ?? 256.KB,
        headers = headers?.parseToMapString ?? {},
        timeout = timeout ?? const Duration(seconds: 30),
+       retryDelays = retryDelays ?? defaultRetryDelays,
        httpClient = httpClient ?? http.Client(),
+       _ownsHttpClient = httpClient == null,
        _state = TusUploadState.notStarted,
        assert(
          (url != null && url.isNotEmpty) ||
              (uploadUrl != null && uploadUrl.isNotEmpty),
          'Either url or uploadUrl must be provided',
+       ),
+       assert(
+         chunkSize == null || chunkSize > 0,
+         'chunkSize must be greater than 0',
        );
+
+  /// The [retryDelays] used when none are given: three retries, after 1, 3 and
+  /// 5 seconds.
+  static const defaultRetryDelays = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 3),
+    Duration(seconds: 5),
+  ];
 
   /// Get the upload state
   TusUploadState get state => _state;
+
+  /// The number of bytes the server has confirmed for this upload.
+  ///
+  /// Maintained from what the server reports, so a chunk that never landed does
+  /// not count towards it. [getData] reads it to know where to read from, and
+  /// must not change it.
+  int get offset => _offset;
 
   /// Get the error message in case of any error
   String? get errorMessage => _errorMessage;
@@ -278,7 +335,7 @@ abstract class TusBaseClient {
         // cancelled one is kept and cancelling only stops it.
         if (url.isNotEmpty) {
           _uploadURI = Uri();
-          offset = 0;
+          _offset = 0;
         }
       }
 
@@ -286,97 +343,34 @@ abstract class TusBaseClient {
         await createUpload();
       }
 
-      // Get offset from server
-      offset = await _resolveOffset();
-
-      // Cache the mapping on every path that gets this far, not just on newly
-      // created uploads. A client built from an explicit `uploadUrl` never
-      // reaches [createUpload]'s creation branch, yet its upload URL is just as
-      // worth resuming from in a later session. Skipped when the upload was
-      // cancelled while the offset was being resolved, so the entry
-      // [cancelUpload] just removed does not come straight back.
-      if (_state != TusUploadState.cancelled) {
-        await cache?.set(_fingerprint, uploadUrl);
-      }
-
       http.Response? response;
-
-      final uploadHeaders = {
-        ...headers,
-        Headers.tusResumableHeader: tusVersion,
-        Headers.uploadOffsetHeader: '$offset',
-        Headers.contentType: Headers.contentTypeOffsetOctetStream,
-      };
-
-      // Start upload
-      _state = TusUploadState.uploading;
-      while ((_state != TusUploadState.paused &&
-              _state != TusUploadState.completed &&
-              _state != TusUploadState.cancelled) &&
-          offset < _fileSize) {
-        _state = TusUploadState.uploading;
-        // Update upload progress
-        _onProgress?.call(offset, _fileSize, response);
-
-        uploadHeaders[Headers.uploadOffsetHeader] = '$offset';
-
-        final chunk = await getData();
-        if (chunk.isEmpty) break;
-
-        _uploadFuture = httpClient.patch(
-          _uploadURI,
-          headers: uploadHeaders,
-          body: chunk,
-        );
-        response = await _uploadFuture?.timeout(
-          timeout,
-          onTimeout: () {
-            _onTimeout?.call();
-            _state = TusUploadState.error;
-            return http.Response(
-              '',
-              HttpStatus.requestTimeout,
-              reasonPhrase: _errorMessage = 'Request timeout',
-            );
-          },
-        );
-        _uploadFuture = null;
-
-        // Check if correctly uploaded
-        if (!(response!.statusCode >= 200 && response.statusCode < 300)) {
-          _state = TusUploadState.error;
-          throw ProtocolException(
-            _errorMessage =
-                'Unexpected status code (${response.statusCode}) while uploading chunk',
-            response,
-          );
-        }
-
-        int? serverOffset = _parseOffset(
-          response.headers[Headers.uploadOffsetHeader],
-        );
-        if (serverOffset == null) {
-          _state = TusUploadState.error;
-          throw ProtocolException(
-            _errorMessage =
-                'Response to PATCH request contains no or invalid Upload-Offset header',
-            response,
-          );
-        }
-        if (offset != serverOffset) {
-          _state = TusUploadState.error;
-          throw ProtocolException(
-            _errorMessage =
-                'Response contains different Upload-Offset value ($serverOffset) than expected ($offset)',
-            response,
-          );
+      for (var attempt = 0; ; attempt++) {
+        try {
+          response = await _uploadChunks();
+          break;
+        } on Exception catch (e) {
+          // A pause or cancel was asked for, so this attempt is over either
+          // way and what the last request did is no longer worth reporting.
+          final requestedStop = _requestedStop;
+          if (requestedStop != null) {
+            _state = requestedStop;
+            _errorMessage = null;
+            break;
+          }
+          if (!_shouldRetry(e, attempt)) rethrow;
+          _errorMessage = null;
+          await Future.delayed(retryDelays[attempt]);
+          // The failed attempt may have read bytes that never reached the
+          // server, and the next one restarts from the offset the server
+          // confirms, so the source has to be able to go back there.
+          await resetSource();
         }
       }
 
       // Update upload progress
-      _onProgress?.call(offset, _fileSize, response);
+      _onProgress?.call(_offset, _fileSize, response);
 
-      if (offset == _fileSize) {
+      if (_offset == _fileSize) {
         // Upload completed
         _state = TusUploadState.completed;
         // Awaited so the entry is really gone before the caller is notified and
@@ -391,6 +385,149 @@ abstract class TusBaseClient {
       rethrow;
     }
   }
+
+  /// Re-reads the offset from the server and sends chunks from there until the
+  /// file is done, or until the upload is paused or cancelled. Returns the last
+  /// response received, or `null` when no chunk had to be sent.
+  ///
+  /// Every retry runs this again from the top, so the offset is always taken
+  /// from the server rather than assumed from the failed attempt.
+  Future<http.Response?> _uploadChunks() async {
+    _offset = await _resolveOffset();
+
+    // Cache the mapping on every path that gets this far, not just on newly
+    // created uploads. A client built from an explicit `uploadUrl` never
+    // reaches [createUpload]'s creation branch, yet its upload URL is just as
+    // worth resuming from in a later session. Skipped when the upload was
+    // cancelled while the offset was being resolved, so the entry
+    // [cancelUpload] just removed does not come straight back.
+    if (_state != TusUploadState.cancelled) {
+      await cache?.set(_fingerprint, uploadUrl);
+    }
+
+    http.Response? response;
+
+    final uploadHeaders = {
+      ...headers,
+      Headers.tusResumableHeader: tusVersion,
+      Headers.uploadOffsetHeader: '$_offset',
+      Headers.contentType: Headers.contentTypeOffsetOctetStream,
+    };
+
+    // Start upload
+    _state = TusUploadState.uploading;
+    while (_state != TusUploadState.paused &&
+        _state != TusUploadState.cancelled &&
+        _offset < _fileSize) {
+      _state = TusUploadState.uploading;
+      // Update upload progress
+      _onProgress?.call(_offset, _fileSize, response);
+
+      uploadHeaders[Headers.uploadOffsetHeader] = '$_offset';
+
+      final chunk = await getData();
+      if (chunk.isEmpty) {
+        // The source is shorter than the file size it reported. Stopping here
+        // silently would leave a half uploaded file and report success.
+        _state = TusUploadState.error;
+        throw ProtocolException(
+          _errorMessage =
+              'The upload source ran out of data at offset $_offset, but '
+              '$_fileSize bytes were expected',
+        );
+      }
+
+      try {
+        _uploadFuture = httpClient.patch(
+          _uploadURI,
+          headers: uploadHeaders,
+          body: chunk,
+        );
+        response = await _uploadFuture?.timeout(
+          timeout,
+          onTimeout: () {
+            _onTimeout?.call();
+            return http.Response(
+              '',
+              HttpStatus.requestTimeout,
+              reasonPhrase: 'Request timeout',
+            );
+          },
+        );
+      } finally {
+        // Cleared even when the request fails, so that [pauseUpload] and
+        // [cancelUpload] never wait on, and rethrow the error of, a request
+        // that is long gone.
+        _uploadFuture = null;
+      }
+
+      // Check if correctly uploaded
+      if (!(response!.statusCode >= 200 && response.statusCode < 300)) {
+        _state = TusUploadState.error;
+        throw ProtocolException(
+          _errorMessage =
+              'Unexpected status code (${response.statusCode}) while uploading chunk',
+          response,
+        );
+      }
+
+      int? serverOffset = _parseHeaderInt(
+        response.headers[Headers.uploadOffsetHeader],
+      );
+      if (serverOffset == null) {
+        _state = TusUploadState.error;
+        throw ProtocolException(
+          _errorMessage =
+              'Response to PATCH request contains no or invalid Upload-Offset header',
+          response,
+        );
+      }
+      final expectedOffset = _offset + chunk.length;
+      if (expectedOffset != serverOffset) {
+        _state = TusUploadState.error;
+        throw ProtocolException(
+          _errorMessage =
+              'Response contains different Upload-Offset value ($serverOffset) than expected ($expectedOffset)',
+          response,
+        );
+      }
+      _offset = serverOffset;
+    }
+    return response;
+  }
+
+  /// Status codes worth trying again: the server could not take the chunk right
+  /// now, rather than refusing it outright.
+  static const _retryableStatusCodes = <int>{
+    HttpStatus.requestTimeout,
+    HttpStatus.tooManyRequests,
+    HttpStatus.internalServerError,
+    HttpStatus.badGateway,
+    HttpStatus.serviceUnavailable,
+    HttpStatus.gatewayTimeout,
+  };
+
+  /// Whether [error], hit on the given zero based [attempt], is worth retrying.
+  bool _shouldRetry(Exception error, int attempt) {
+    if (attempt >= retryDelays.length) return false;
+    // Transport failures: connection reset, DNS, TLS and the like. package:http
+    // funnels all of them through ClientException, which keeps this working on
+    // web too, where dart:io types do not exist.
+    if (error is http.ClientException) return true;
+    if (error is ProtocolException) {
+      return _retryableStatusCodes.contains(error.statusCode);
+    }
+    return false;
+  }
+
+  /// Called before a failed attempt is retried, so a source that cannot be read
+  /// backwards can start over.
+  ///
+  /// A chunk handed out by [getData] may never have reached the server, and the
+  /// retry picks up from the offset the server confirms, which can be behind
+  /// what the source has already read. A random access source such as a file
+  /// needs nothing here, which is why this does nothing by default.
+  Future<void> resetSource() async {}
 
   /// Starts or resumes an upload in chunks of [chunkSize].
   /// If [onError] is specified all errors will be notified through the callback
@@ -416,12 +553,31 @@ abstract class TusBaseClient {
     /// 30 seconds
     Function()? onTimeout,
   }) async {
+    // Two upload loops on one client share the same offset and the same in
+    // flight request, which desynchronizes both from the server.
+    if (_activeUpload != null) {
+      throw StateError(
+        'An upload is already running on this client. Await the future of the '
+        'previous startUpload() or resumeUpload(), or pause or cancel it, '
+        'before starting another one.',
+      );
+    }
     _onProgress = onProgress;
     _onComplete = onComplete;
     _onError = onError;
     _onTimeout = onTimeout;
+    _requestedStop = null;
     _state = TusUploadState.uploading;
-    return _upload();
+
+    // Assigned before the first suspension, so a second call made right after
+    // this one returns already sees an upload in progress.
+    final upload = _upload();
+    _activeUpload = upload;
+    try {
+      await upload;
+    } finally {
+      _activeUpload = null;
+    }
   }
 
   /// Resumes an upload where it left of. This function calls [upload()]
@@ -430,6 +586,7 @@ abstract class TusBaseClient {
   Future<void> resumeUpload() => startUpload(
     onProgress: _onProgress,
     onComplete: _onComplete,
+    onError: _onError,
     onTimeout: _onTimeout,
   );
 
@@ -449,15 +606,18 @@ abstract class TusBaseClient {
     // Set here rather than from the timeout callback below: that callback only
     // runs if the timer wins the race against the request in flight, and does
     // not run at all when there is no request to time out.
+    _requestedStop = TusUploadState.paused;
     _state = TusUploadState.paused;
-    return _uploadFuture?.timeout(
-      Duration.zero,
-      onTimeout: () => http.Response(
-        '',
-        HttpStatus.ok,
-        reasonPhrase: 'Upload request paused',
-      ),
+    final pausedResponse = http.Response(
+      '',
+      HttpStatus.ok,
+      reasonPhrase: 'Upload request paused',
     );
+    // A failure of the request in flight is the running upload's to report, not
+    // this one's, so it is not allowed to escape through here.
+    return _uploadFuture
+        ?.timeout(Duration.zero, onTimeout: () => pausedResponse)
+        .catchError((_) => pausedResponse);
   }
 
   /// Cancel the current upload.
@@ -481,6 +641,7 @@ abstract class TusBaseClient {
   /// case there is nothing to cancel and the upload is left alone.
   Future? cancelUpload() {
     if (_state == TusUploadState.completed) return null;
+    _requestedStop = TusUploadState.cancelled;
     _state = TusUploadState.cancelled;
     _uploadCancelled = true;
     return _recordCancellation();
@@ -495,10 +656,11 @@ abstract class TusBaseClient {
     // Awaited so that awaiting the returned future guarantees the entry is
     // gone, instead of racing a process exit against the cache write.
     await cache?.remove(_fingerprint);
-    final inFlightResponse = await _uploadFuture?.timeout(
-      Duration.zero,
-      onTimeout: () => cancelledResponse,
-    );
+    // A failure of the request in flight is the running upload's to report, not
+    // this one's, so it is not allowed to escape through here.
+    final inFlightResponse = await _uploadFuture
+        ?.timeout(Duration.zero, onTimeout: () => cancelledResponse)
+        .catchError((_) => cancelledResponse);
     return inFlightResponse is http.Response
         ? inFlightResponse
         : cancelledResponse;
@@ -557,13 +719,27 @@ abstract class TusBaseClient {
 
   /// Override this to customize the header 'Upload-Metadata'
   String generateMetadata() {
-    final meta = metadata ?? <String, dynamic>{};
+    // A copy, so that the caller's [metadata] is neither modified behind their
+    // back nor required to be modifiable in the first place.
+    final meta = <String, dynamic>{...?metadata};
 
     if (!meta.containsKey('filename') && fileName != null) {
       meta['filename'] = fileName!;
     }
 
     return meta.parseToMetadata;
+  }
+
+  /// Releases the resources held by this client.
+  ///
+  /// Closes [httpClient] when it was created by this client. One passed in
+  /// through the constructor belongs to the caller and is left open, since it
+  /// may still be in use elsewhere.
+  ///
+  /// This does not stop a running upload. Call [pauseUpload] or [cancelUpload],
+  /// and await the future of the running [startUpload], before closing.
+  void close() {
+    if (_ownsHttpClient) httpClient.close();
   }
 
   /// Status codes that mean the upload URL is no longer usable: the server
@@ -575,42 +751,60 @@ abstract class TusBaseClient {
     HttpStatus.gone,
   };
 
-  /// Gets the current offset from the server, recovering from an upload URL the
-  /// server no longer knows about.
+  /// Gets the current offset from the server, recovering from an upload URL
+  /// that cannot be used for this file.
   ///
   /// A cached upload URL, or one created in a previous session, can expire or
-  /// be swept server side. The HEAD request in [_getOffset] then fails with one
-  /// of [_staleUploadUrlStatusCodes]. Rather than failing the whole upload, the
-  /// dead URL is dropped from [cache] and a brand new upload is created, so the
-  /// upload restarts instead of hard failing.
+  /// be swept server side, in which case the HEAD request in [_getUploadState]
+  /// fails with one of [_staleUploadUrlStatusCodes]. It can also still exist
+  /// but belong to a different file, which the server's `Upload-Length` gives
+  /// away: resuming into it would corrupt that upload. Both cases drop the URL
+  /// from [cache] and create a brand new upload, so the upload starts over
+  /// instead of hard failing or corrupting someone else's file.
   ///
   /// The recovery needs a creation [url] to POST to. Without one, which is the
   /// case for a client built from an explicit `uploadUrl`, the
-  /// [ProtocolException] is rethrown, since the caller asked for that specific
+  /// [ProtocolException] is thrown, since the caller asked for that specific
   /// upload and silently uploading somewhere else is not what they requested.
   Future<int> _resolveOffset() async {
+    ProtocolException failure;
     try {
-      return await _getOffset();
-    } on ProtocolException catch (e) {
-      if (!_staleUploadUrlStatusCodes.contains(e.response.statusCode)) rethrow;
-
-      // Only evict the entry that actually points at the dead URL, so a cached
-      // mapping to some other upload is left untouched.
-      if (await cache?.get(_fingerprint) == uploadUrl) {
-        await cache?.remove(_fingerprint);
+      final serverState = await _getUploadState();
+      // A server that does not report the length, which the protocol allows for
+      // a deferred length upload, leaves nothing to cross check.
+      if (serverState.length == null || serverState.length == _fileSize) {
+        return serverState.offset;
       }
-
-      if (url.isEmpty) rethrow;
-
-      _uploadURI = Uri();
-      _errorMessage = null;
-      await createUpload();
-      return await _getOffset();
+      _state = TusUploadState.error;
+      failure = ProtocolException(
+        _errorMessage =
+            'The upload at $uploadUrl is ${serverState.length} bytes long but '
+            '$_fileSize bytes were expected, so it belongs to a different file',
+      );
+    } on ProtocolException catch (e) {
+      if (!_staleUploadUrlStatusCodes.contains(e.statusCode)) rethrow;
+      failure = e;
     }
+
+    // Only evict the entry that actually points at the unusable URL, so a
+    // cached mapping to some other upload is left untouched.
+    if (await cache?.get(_fingerprint) == uploadUrl) {
+      await cache?.remove(_fingerprint);
+    }
+
+    if (url.isEmpty) throw failure;
+
+    _uploadURI = Uri();
+    _errorMessage = null;
+    await createUpload();
+    return (await _getUploadState()).offset;
   }
 
-  /// Get offset from server throwing [ProtocolException] on error
-  Future<int> _getOffset() async {
+  /// Reads how far the server got with this upload, and how long it expects the
+  /// file to be. Throws [ProtocolException] on error.
+  ///
+  /// `length` is `null` when the server does not report `Upload-Length`.
+  Future<({int offset, int? length})> _getUploadState() async {
     final offsetHeaders = {...headers, Headers.tusResumableHeader: tusVersion};
     final response = await httpClient.head(_uploadURI, headers: offsetHeaders);
 
@@ -623,7 +817,7 @@ abstract class TusBaseClient {
       );
     }
 
-    int? serverOffset = _parseOffset(
+    int? serverOffset = _parseHeaderInt(
       response.headers[Headers.uploadOffsetHeader],
     );
     if (serverOffset == null) {
@@ -633,32 +827,37 @@ abstract class TusBaseClient {
         response,
       );
     }
-    return serverOffset;
+    return (
+      offset: serverOffset,
+      length: _parseHeaderInt(response.headers[Headers.uploadLengthHeader]),
+    );
   }
 
-  /// Get data from file to upload
+  /// Get data from file to upload.
+  ///
+  /// Must return the bytes starting at [offset], at most [chunkSize] of them,
+  /// and must not change [offset] itself. The client advances [offset] from
+  /// what the server confirms once the chunk has landed.
   Future<Uint8List> getData();
 
-  int? _parseOffset(String? offset) {
-    if (offset == null || offset.isEmpty) return null;
-    if (offset.contains(',')) {
-      offset = offset.substring(0, offset.indexOf(','));
+  int? _parseHeaderInt(String? value) {
+    if (value == null || value.isEmpty) return null;
+    if (value.contains(',')) {
+      value = value.substring(0, value.indexOf(','));
     }
-    return int.tryParse(offset);
+    return int.tryParse(value.trim());
   }
 
+  /// Resolves the `Location` of a created upload against the creation [url].
   Uri parseToURI(String locationURL) {
     if (locationURL.contains(',')) {
       locationURL = locationURL.substring(0, locationURL.indexOf(','));
     }
-    Uri uploadURI = Uri.parse(locationURL);
-    Uri baseURI = Uri.parse(url);
-    if (uploadURI.host.isEmpty) {
-      uploadURI = uploadURI.replace(host: baseURI.host, port: baseURI.port);
-    }
-    if (uploadURI.scheme.isEmpty) {
-      uploadURI = uploadURI.replace(scheme: baseURI.scheme);
-    }
-    return uploadURI;
+    final location = Uri.parse(locationURL.trim());
+    if (url.isEmpty) return location;
+    // RFC 3986 resolution, so an absolute, a root relative and a path relative
+    // Location all end up where the server meant them to, instead of a path
+    // relative one silently losing the base path.
+    return Uri.parse(url).resolveUri(location);
   }
 }

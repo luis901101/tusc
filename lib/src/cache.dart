@@ -63,56 +63,67 @@ class TusMemoryCache implements TusCache {
 ///
 /// This cache **will** keep the values after your application crashes or
 /// restarts.
+/// Note the underlying storage is initialized globally, so several instances
+/// pointing at different [path]s in the same process end up sharing the storage
+/// of whichever one was opened first.
 class TusPersistentCache implements TusCache {
-  bool _isHiveInitialized = false;
-  bool _isBoxOpened = false;
-  late final Box<String> _box;
+  /// Where the cache storage is kept. Ignored on web, where the platform
+  /// handles storage itself.
   final String path;
-  TusPersistentCache(this.path) {
-    _initHive();
+
+  /// The pending or finished box opening.
+  ///
+  /// Memoized so concurrent callers share a single open. Opening it per call
+  /// instead lets two callers both find the box closed and open it twice.
+  Future<Box<String>>? _boxFuture;
+
+  TusPersistentCache(this.path);
+
+  Future<Box<String>> _openBox() async {
+    final pendingBox = _boxFuture ??= _open();
+    try {
+      return await pendingBox;
+    } catch (_) {
+      // A failed open is not remembered, so a later call gets to try again.
+      if (identical(_boxFuture, pendingBox)) _boxFuture = null;
+      rethrow;
+    }
   }
 
-  Future<void> _initHive() async {
-    final cachePath = p.join(path, 'tus');
-    if (!isWeb) Hive.init(cachePath);
-    _isHiveInitialized = true;
-  }
-
-  Future<void> _openBox() async {
-    if (!_isHiveInitialized) await _initHive();
-    if (!_isBoxOpened) _box = await Hive.openBox('tus-persistent-cache');
-    _isBoxOpened = _box.isOpen;
+  Future<Box<String>> _open() async {
+    if (!isWeb) Hive.init(p.join(path, 'tus'));
+    return Hive.openBox<String>('tus-persistent-cache');
   }
 
   /// Cache a new [fingerprint] and its upload [url].
   @override
   Future<void> set(String fingerprint, String url) async {
-    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
-    await _openBox();
-    _box.put(hashedFingerprint, url);
+    final box = await _openBox();
+    // Awaited so the entry is on disk when this completes. Without it a crash
+    // right after an upload starts can lose the very mapping that would have
+    // let the upload be resumed.
+    await box.put(_hashKeyWithSha1(fingerprint), url);
   }
 
   /// Retrieve an upload URL for a [fingerprint].
   /// If no matching entry is found this method will return `null`.
   @override
   Future<String?> get(String fingerprint) async {
-    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
-    await _openBox();
-    return _box.get(hashedFingerprint);
+    final box = await _openBox();
+    return box.get(_hashKeyWithSha1(fingerprint));
   }
 
   /// Remove an entry from the cache using an upload [fingerprint].
   @override
   Future<void> remove(String fingerprint) async {
-    final hashedFingerprint = _hashKeyWithSha1(fingerprint);
-    await _openBox();
-    _box.delete(hashedFingerprint);
+    final box = await _openBox();
+    await box.delete(_hashKeyWithSha1(fingerprint));
   }
 
   @override
   Future<void> clear() async {
-    await _openBox();
-    await _box.clear();
+    final box = await _openBox();
+    await box.clear();
   }
 }
 

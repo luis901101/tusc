@@ -112,12 +112,15 @@ void handleClient(TusBaseClient tusClient) {
     onTimeout: () {
       print('Upload timed out');
     },
+
+    /// [e.response] is null when the failure did not come from a server
+    /// response, for instance when the data source runs out of bytes early.
     onError: (e) {
       print('Error message: ${e.message}');
-      print('Response status code: ${e.response.statusCode}');
-      print('Response status reasonPhrase: ${e.response.reasonPhrase}');
-      print('Response body: ${e.response.body}');
-      print('Response headers: ${e.response.headers}');
+      print('Response status code: ${e.statusCode}');
+      print('Response status reasonPhrase: ${e.response?.reasonPhrase}');
+      print('Response body: ${e.response?.body}');
+      print('Response headers: ${e.response?.headers}');
     },
   );
 

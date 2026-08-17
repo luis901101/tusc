@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' show min;
 import 'dart:typed_data';
 
 import 'package:tusc/src/client_base.dart';
@@ -116,6 +115,7 @@ class TusStreamClient extends TusBaseClient {
     super.headers,
     super.metadata,
     super.timeout,
+    super.retryDelays,
     super.httpClient,
   }) : _streamHandler = StreamHandler(fileStreamGenerator),
        _fileSize = fileSize,
@@ -133,17 +133,17 @@ class TusStreamClient extends TusBaseClient {
     return super.createUpload();
   }
 
+  /// A stream cannot be read backwards, so a retry that has to go back to an
+  /// earlier offset can only start the stream over and read forward to it.
+  ///
+  /// This calls [fileStreamGenerator] again. A stream that cannot be recreated
+  /// therefore cannot be retried either, see [fileStreamGenerator] for what to
+  /// do about that.
+  @override
+  Future<void> resetSource() async => _streamHandler.reset();
+
   /// Get data from stream to upload
   @override
-  Future<Uint8List> getData() async {
-    final Uint8List chunk = await _streamHandler.read(
-      start: offset,
-      chunkSize: chunkSize,
-    );
-
-    final bytesRead = min(chunkSize, chunk.length);
-    offset += bytesRead;
-
-    return chunk;
-  }
+  Future<Uint8List> getData() =>
+      _streamHandler.read(start: offset, chunkSize: chunkSize);
 }
