@@ -1,5 +1,10 @@
-// This is a conditional export.
-// It tries to load the '_html.dart' version if the dart.library.html constant is true (i.e., we're on the web).
-// Otherwise, it falls back to the '_io.dart' version.
+// This is a conditional export that picks the web implementation when the
+// program is being compiled for a browser, and the native one otherwise.
+//
+// The check is `dart.library.js_interop` rather than `dart.library.html`,
+// because `dart:html` only exists when compiling with dart2js. A Flutter web
+// app built to WebAssembly has no `dart:html`, so keying on it would quietly
+// hand a browser the native implementation. `dart:js_interop` exists on both
+// web compilers and on neither native one.
 export 'platform_utils_io.dart'
-    if (dart.library.html) 'platform_utils_html.dart';
+    if (dart.library.js_interop) 'platform_utils_web.dart';

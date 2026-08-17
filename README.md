@@ -270,6 +270,16 @@ Future<void> sample() async {
 
 ```
 
+### Platform support
+
+Pure dart, no `dart:io`, so it runs on native and on the web with either web compiler — `dart2js` and `dart2wasm` alike. The suite covers all three:
+
+```bash
+dart test                                          # native
+dart test --platform chrome                        # web, dart2js
+dart test --platform chrome --compiler dart2wasm   # web, wasm
+```
+
 ### Progress reporting
 
 `onProgress` is called while a chunk is being sent, not only once it lands. A chunk goes out as a stream of slices of `progressSliceSize` bytes — 64 KB by default — and each slice handed to the network produces a report. With a 50 MB `chunkSize` that is roughly 800 reports spread across the transfer instead of one at the end, so a progress bar actually moves.

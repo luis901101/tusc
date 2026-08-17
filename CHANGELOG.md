@@ -43,6 +43,7 @@ Types of changes
 - Fixed `generateMetadata()` writing `filename` into the caller's `metadata` map, which also made a `const` map throw.
 - Fixed `pauseUpload()` and `cancelUpload()` rethrowing the error of a request that had already failed.
 - Fixed `resumeUpload()` dropping the `onError` callback, so errors were thrown instead of delivered after a resume.
+- Fixed the platform check picking the native implementation on a Flutter web app compiled to WebAssembly, which made `TusPersistentCache` treat a browser as a native platform.
 
 ## 3.0.0
 ### Added
