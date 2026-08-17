@@ -11,6 +11,7 @@ Types of changes
 
 ## 4.0.0
 ### Added
+- Added sub chunk progress: `onProgress` is now called every `progressSliceSize` bytes while a chunk is being sent, defaulting to 64 KB, instead of only once the whole chunk has landed.
 - Added `retryDelays` to retry a request that failed on a transport error or on 408, 429 or a 5xx, defaulting to three retries after 1, 3 and 5 seconds; pass an empty list to keep failing on the first error.
 - Added `close()` to dispose of the internally created `httpClient`.
 - Added a check of the server's `Upload-Length` when resuming, so an upload belonging to a different file is replaced by a new one instead of being corrupted.
@@ -23,6 +24,7 @@ Types of changes
 - `cancelUpload()` now always returns a future, which completes once the cancellation and its cache removal have been recorded, and returns `null` only for an already completed upload.
 - Documented on `generateFingerprint()` what the fingerprint has to be stable and unique across.
 - **Breaking:** `ProtocolException.response` is now nullable, since a failure that did not come from a server response has none to report. Replace `e.response.statusCode` with `e.statusCode`, and `e.response.x` with `e.response?.x`.
+- **Breaking:** `onProgress` now reports bytes *sent* rather than bytes the server has confirmed, so its `count` can go backwards when a chunk fails and the offset is read back from the server, and its `response` is `null` for the reports made while a chunk is in flight.
 - **Breaking:** `offset` is now read only and maintained from what the server confirms. A `getData()` override must no longer advance it.
 - **Breaking:** `startUpload()` throws a `StateError` when an upload is already running on the same client, instead of starting a second loop that fights the first one for the offset.
 - A `Location` response header is now resolved against the creation `url` following RFC 3986, so a path relative one no longer loses the base path.

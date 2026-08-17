@@ -270,6 +270,27 @@ Future<void> sample() async {
 
 ```
 
+### Progress reporting
+
+`onProgress` is called while a chunk is being sent, not only once it lands. A chunk goes out as a stream of slices of `progressSliceSize` bytes — 64 KB by default — and each slice handed to the network produces a report. With a 50 MB `chunkSize` that is roughly 800 reports spread across the transfer instead of one at the end, so a progress bar actually moves.
+
+```dart
+final tusClient = TusClient(
+  url: tusServerURL,
+  file: file,
+  chunkSize: 50.MB,
+  /// Optional, defaults to 64 KB. Set it to chunkSize or more for one report per chunk.
+  progressSliceSize: 256.KB,
+);
+```
+
+Two things follow from this:
+
+- `count` is bytes **sent**, not bytes the server has acknowledged. If a chunk fails on the way it is reported as sent, and then reported again at its real value once the offset has been read back from the server — so `count` can go backwards after a failure. That is the honest picture of a retry.
+- `response` is `null` for the reports made while a chunk is in flight. It is non-null only on the report that follows the server confirming the chunk.
+
+On web the whole request body is buffered before it is issued, so the reports all arrive up front rather than spread over the transfer. Native platforms stream the body, which is where this pays off.
+
 ### Retrying
 
 A request that fails on a transport error — a dropped connection, DNS, TLS — or because the server responded `408`, `429` or a `5xx`, is retried according to `retryDelays`. The default is three retries, after 1, 3 and 5 seconds:

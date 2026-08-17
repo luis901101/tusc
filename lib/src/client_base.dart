@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show min;
 import 'dart:typed_data' show Uint8List;
 
 import 'package:http/http.dart' as http;
@@ -13,6 +14,16 @@ import 'package:tusc/src/utils/num_utils.dart';
 /// Callback to listen the progress for sending data.
 /// [count] the length of the bytes that have been sent.
 /// [total] the content length.
+///
+/// This is called while a chunk is still being sent, every
+/// [TusBaseClient.progressSliceSize] bytes, and again with the [response] of
+/// the request once the server has confirmed the chunk.
+///
+/// [count] is therefore bytes *sent*, not bytes the server has acknowledged.
+/// A chunk that fails on the way is reported as sent and then, once the offset
+/// has been read back from the server, reported again at its confirmed value,
+/// so [count] can go backwards after a failure. [response] is `null` for the
+/// reports made while a chunk is in flight.
 typedef ProgressCallback =
     void Function(int count, int total, http.Response? response);
 
@@ -94,6 +105,20 @@ abstract class TusBaseClient {
   /// Default value: 256 KB
   final int chunkSize;
 
+  /// How much of a chunk is handed to the network at a time, and with it how
+  /// often [ProgressCallback] is called while that chunk is in flight.
+  /// Default value: 64 KB
+  ///
+  /// A chunk is sent as a stream of slices this size, so a 50 MB [chunkSize]
+  /// reports progress roughly 800 times on the way instead of once at the end.
+  /// Set it to [chunkSize] or more to go back to a single report per chunk.
+  ///
+  /// Note this counts bytes handed to the platform's http client, which is as
+  /// close to the wire as dart gets. On web the whole body is buffered before
+  /// the request is issued, so the reports all arrive up front rather than
+  /// spread over the transfer.
+  final int progressSliceSize;
+
   /// Timeout duration for tus server requests
   /// Default value: 30 seconds
   final Duration timeout;
@@ -163,6 +188,7 @@ abstract class TusBaseClient {
     String? url,
     String? uploadUrl,
     int? chunkSize,
+    int? progressSliceSize,
     this.tusVersion = Headers.defaultTusVersion,
     this.cache,
     Map<String, dynamic>? headers,
@@ -175,6 +201,7 @@ abstract class TusBaseClient {
            ? Uri.tryParse(uploadUrl) ?? Uri()
            : Uri(),
        chunkSize = chunkSize ?? 256.KB,
+       progressSliceSize = progressSliceSize ?? 64.KB,
        headers = headers?.parseToMapString ?? {},
        timeout = timeout ?? const Duration(seconds: 30),
        retryDelays = retryDelays ?? defaultRetryDelays,
@@ -189,6 +216,10 @@ abstract class TusBaseClient {
        assert(
          chunkSize == null || chunkSize > 0,
          'chunkSize must be greater than 0',
+       ),
+       assert(
+         progressSliceSize == null || progressSliceSize > 0,
+         'progressSliceSize must be greater than 0',
        );
 
   /// The [retryDelays] used when none are given: three retries, after 1, 3 and
@@ -437,12 +468,19 @@ abstract class TusBaseClient {
         );
       }
 
+      // Captured before the request goes out, so the reports made on the way
+      // are absolute file offsets rather than offsets within the chunk.
+      final chunkStart = _offset;
+      final request = _ChunkUploadRequest(
+        _uploadURI,
+        body: chunk,
+        sliceSize: progressSliceSize,
+        onBytesSent: (bytesSent) =>
+            _onProgress?.call(chunkStart + bytesSent, _fileSize, null),
+      )..headers.addAll(uploadHeaders);
+
       try {
-        _uploadFuture = httpClient.patch(
-          _uploadURI,
-          headers: uploadHeaders,
-          body: chunk,
-        );
+        _uploadFuture = httpClient.send(request).then(http.Response.fromStream);
         response = await _uploadFuture?.timeout(
           timeout,
           onTimeout: () {
@@ -859,5 +897,48 @@ abstract class TusBaseClient {
     // Location all end up where the server meant them to, instead of a path
     // relative one silently losing the base path.
     return Uri.parse(url).resolveUri(location);
+  }
+}
+
+/// A tus `PATCH` whose body is handed over in slices rather than in one go, so
+/// that progress can be reported while the chunk is still being sent instead of
+/// only once the server has taken all of it.
+///
+/// The slices are pulled by the http client as it writes to the socket, so
+/// [onBytesSent] follows the pace of the transfer rather than a timer.
+class _ChunkUploadRequest extends http.BaseRequest {
+  _ChunkUploadRequest(
+    Uri url, {
+    required this.body,
+    required this.sliceSize,
+    required this.onBytesSent,
+  }) : super('PATCH', url) {
+    // Set before finalizing, so the request still carries a Content-Length and
+    // is not sent chunked.
+    contentLength = body.length;
+  }
+
+  final Uint8List body;
+  final int sliceSize;
+
+  /// Called with the number of bytes of [body] handed over so far, after each
+  /// slice has been taken.
+  final void Function(int bytesSent) onBytesSent;
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    return http.ByteStream(_slices());
+  }
+
+  Stream<List<int>> _slices() async* {
+    var sent = 0;
+    while (sent < body.length) {
+      final end = min(sent + sliceSize, body.length);
+      // Views, so slicing a chunk costs nothing beyond the bookkeeping.
+      yield Uint8List.sublistView(body, sent, end);
+      sent = end;
+      onBytesSent(sent);
+    }
   }
 }

@@ -36,6 +36,7 @@ class TusClient extends TusBaseClient {
     super.url,
     super.uploadUrl,
     super.chunkSize,
+    super.progressSliceSize,
     super.tusVersion,
     super.cache,
     super.headers,
