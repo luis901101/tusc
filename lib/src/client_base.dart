@@ -174,7 +174,8 @@ abstract class TusBaseClient {
   /// stop was asked for and let a retry carry the upload on regardless.
   TusUploadState? _requestedStop;
 
-  /// The upload currently running, used to reject a second concurrent one.
+  /// The upload currently running, which a second [startUpload] joins instead
+  /// of starting a loop of its own alongside it.
   Future<void>? _activeUpload;
   TusUploadState _state;
   Future? _uploadFuture;
@@ -570,6 +571,14 @@ abstract class TusBaseClient {
   /// Starts or resumes an upload in chunks of [chunkSize].
   /// If [onError] is specified all errors will be notified through the callback
   /// otherwise it will throw a [ProtocolException] on server error.
+  ///
+  /// Calling this while an upload is already running does not start a second
+  /// one. The call adopts the callbacks given here and returns the future of
+  /// the upload already in progress, so a double tap or a rebuild that fires
+  /// this twice is harmless.
+  ///
+  /// The returned future completes when the upload stops, whether that is
+  /// because it finished, or because it was paused or cancelled.
   Future<void> startUpload({
     /// Callback to notify about the upload progress. It provides [count] which
     /// is the amount of data already uploaded, [total] the amount of data to be
@@ -591,19 +600,27 @@ abstract class TusBaseClient {
     /// 30 seconds
     Function()? onTimeout,
   }) async {
-    // Two upload loops on one client share the same offset and the same in
-    // flight request, which desynchronizes both from the server.
-    if (_activeUpload != null) {
-      throw StateError(
-        'An upload is already running on this client. Await the future of the '
-        'previous startUpload() or resumeUpload(), or pause or cancel it, '
-        'before starting another one.',
-      );
-    }
+    // Installed before joining below, so the callbacks of the latest call are
+    // the ones that get notified either way. Silently keeping the previous
+    // ones would leave the callbacks just passed in never firing.
     _onProgress = onProgress;
     _onComplete = onComplete;
     _onError = onError;
     _onTimeout = onTimeout;
+
+    while (true) {
+      final activeUpload = _activeUpload;
+      if (activeUpload == null) break;
+      // Already uploading and nobody has asked it to stop, so this call has
+      // nothing to add: it joins the upload that is running rather than
+      // starting a second loop, which would fight the first one over the
+      // offset and the request in flight.
+      if (_requestedStop == null) return activeUpload;
+      // A pause or cancel is still settling. Let the attempt finish before
+      // starting the new one, otherwise it would be stopped on arrival.
+      await activeUpload;
+    }
+
     _requestedStop = null;
     _state = TusUploadState.uploading;
 
@@ -621,6 +638,9 @@ abstract class TusBaseClient {
   /// Resumes an upload where it left of. This function calls [upload()]
   /// using the same callbacks used last time [upload()] was called.
   /// Throws [ProtocolException] on server error
+  ///
+  /// Calling this while the upload is already running is a no-op that returns
+  /// the future of the upload in progress, since there is nothing to resume.
   Future<void> resumeUpload() => startUpload(
     onProgress: _onProgress,
     onComplete: _onComplete,

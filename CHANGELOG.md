@@ -26,7 +26,7 @@ Types of changes
 - **Breaking:** `ProtocolException.response` is now nullable, since a failure that did not come from a server response has none to report. Replace `e.response.statusCode` with `e.statusCode`, and `e.response.x` with `e.response?.x`.
 - **Breaking:** `onProgress` now reports bytes *sent* rather than bytes the server has confirmed, so its `count` can go backwards when a chunk fails and the offset is read back from the server, and its `response` is `null` for the reports made while a chunk is in flight.
 - **Breaking:** `offset` is now read only and maintained from what the server confirms. A `getData()` override must no longer advance it.
-- **Breaking:** `startUpload()` throws a `StateError` when an upload is already running on the same client, instead of starting a second loop that fights the first one for the offset.
+- `startUpload()` and `resumeUpload()` called while an upload is already running now adopt the callbacks given to them and return the future of that upload, instead of starting a second chunk loop that fought the first one for the offset.
 - A `Location` response header is now resolved against the creation `url` following RFC 3986, so a path relative one no longer loses the base path.
 - `chunkSize` is now asserted to be greater than 0.
 

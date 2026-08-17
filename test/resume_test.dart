@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -899,21 +900,109 @@ void main() {
       );
     });
 
-    test('a second concurrent upload is rejected', () async {
+    test('a second startUpload joins the one already running', () async {
       final client = buildClient(cache: TusMemoryCache(), url: createEndpoint);
 
       final first = client.startUpload();
-      await expectLater(client.startUpload(), throwsA(isA<StateError>()));
-      await first;
+      final second = client.startUpload();
+      await Future.wait([first, second]);
 
       expect(client.state, TusUploadState.completed);
       expect(server.bytesOf(client.uploadUrl), fileBytes);
       expect(
+        server.createCount,
+        1,
+        reason: 'joining must not create a second upload on the server',
+      );
+      expect(
         server.requestLog.where((entry) => entry.startsWith('PATCH')).length,
         fileSize ~/ chunkSize,
-        reason: 'exactly one loop must have run',
+        reason:
+            'exactly one chunk loop must have run, otherwise the two would '
+            'fight over the offset',
       );
     });
+
+    test('resumeUpload while running joins instead of restarting', () async {
+      final client = buildClient(cache: TusMemoryCache(), url: createEndpoint);
+
+      final first = client.startUpload();
+      await Future.wait([first, client.resumeUpload()]);
+
+      expect(client.state, TusUploadState.completed);
+      expect(server.createCount, 1);
+      expect(
+        server.requestLog.where((entry) => entry.startsWith('PATCH')).length,
+        fileSize ~/ chunkSize,
+      );
+    });
+
+    test('the callbacks of the joining call are the ones used', () async {
+      final client = buildClient(cache: TusMemoryCache(), url: createEndpoint);
+
+      final first = <int>[];
+      final second = <int>[];
+      final firstUpload = client.startUpload(
+        onProgress: (count, total, response) => first.add(count),
+      );
+      final secondUpload = client.startUpload(
+        onProgress: (count, total, response) => second.add(count),
+      );
+      await Future.wait([firstUpload, secondUpload]);
+
+      expect(
+        second,
+        isNotEmpty,
+        reason: 'callbacks passed to a joining call must not be ignored',
+      );
+      expect(second.last, fileSize);
+      expect(
+        first.length,
+        lessThan(second.length),
+        reason: 'the latest call takes over the reporting',
+      );
+    });
+
+    test(
+      'starting again while a pause is settling begins a new attempt',
+      () async {
+        final client = buildClient(
+          cache: TusMemoryCache(),
+          url: createEndpoint,
+        );
+
+        // Holds a chunk in flight so the pause is still settling when the next
+        // startUpload arrives.
+        final chunkInFlight = Completer<void>();
+        final releaseChunk = Completer<void>();
+        server.beforeRespond = (method, uploadUrl) async {
+          if (method == 'PATCH' &&
+              server.offsetOf(uploadUrl) == 2 * chunkSize &&
+              !chunkInFlight.isCompleted) {
+            chunkInFlight.complete();
+            await releaseChunk.future;
+          }
+        };
+
+        final firstUpload = client.startUpload();
+        await chunkInFlight.future;
+        client.pauseUpload();
+
+        // The paused attempt has not returned yet, so this must wait for it and
+        // then start a fresh one rather than joining the one that is stopping.
+        final restarted = client.startUpload();
+        releaseChunk.complete();
+        await Future.wait([firstUpload, restarted]);
+
+        expect(
+          client.state,
+          TusUploadState.completed,
+          reason: 'the upload must have carried on rather than staying paused',
+        );
+        expect(server.bytesOf(client.uploadUrl), fileBytes);
+        expect(server.createCount, 1);
+      },
+    );
 
     test('a new upload can start once the previous one is done', () async {
       final client = buildClient(url: createEndpoint);

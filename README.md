@@ -342,6 +342,8 @@ Resuming an upload can be made in two ways:
 
 Both `startUpload(...)` and `resumeUpload()` return a future that completes when the upload itself finishes — that is, when it completes, is paused, or is cancelled. Awaiting one of them therefore waits for the whole upload, not just for it to get going.
 
+Calling either of them while the upload is already running does not start a second one. The call adopts whatever callbacks it was given and returns the future of the upload in progress, so a double tap or a widget rebuild that fires it twice is harmless.
+
 ### Resuming with `uploadUrl`
 If you stored the upload URL externally (e.g. in a database or shared preferences) you can pass it directly via `uploadUrl` when constructing the client. This lets the client skip the upload creation step and resume from exactly where the previous session left off — no `cache` required.
 
