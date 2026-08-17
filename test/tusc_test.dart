@@ -269,9 +269,21 @@ Future<void> genericVideoUploadTest({
 }) async {
   if (!videoFile.existsSync()) fail('No video file available to upload');
 
+  // A persistent cache outlives the test run, so an upload left pending by a
+  // previous run would be resumed by this one and the choreography below would
+  // never happen.
+  await tusClient.cache?.clear();
+
   bool isComplete = false;
+
+  /// Set right before the upload is restarted after being cancelled, so the
+  /// first offset reported from then on can be captured.
+  bool isRestarted = false;
+  int? restartedFromOffset;
+
   void onProgress(int count, int total, Response? response) {
     if (isComplete) return;
+    if (isRestarted) restartedFromOffset ??= count;
     print(
       'tus video upload from file: ${p.basename(videoFile.path)} progress: $count/$total ${(count / total * 100).toInt()}%',
     );
@@ -282,31 +294,40 @@ Future<void> genericVideoUploadTest({
     }
   }
 
+  // Every upload attempt is kept so it can be awaited at the end. Awaiting them
+  // here instead would block until the whole upload finishes, leaving no room
+  // for the pause/cancel/resume choreography, but not awaiting them at all
+  // turns a failed upload into an unhandled async error instead of a failed
+  // test.
+  final uploadAttempts = <Future<void>>[];
+
   final testProgressCallback = expectAsyncUntil3(onProgress, () => isComplete);
-  tusClient.startUpload(
-    onProgress: testProgressCallback,
-    onComplete: (response) {
-      print('Response headers: ${headersPrettyPrint(response.headers)}');
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-      print('------------------------Upload completed----------------------');
-      print(tusClient.uploadUrl);
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-      isComplete = true;
-      testProgressCallback(0, 0, null);
-    },
-    onTimeout: () {
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-      print('------------------------Upload request timeout----------------');
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-      print('--------------------------------------------------------------');
-    },
+  uploadAttempts.add(
+    tusClient.startUpload(
+      onProgress: testProgressCallback,
+      onComplete: (response) {
+        print('Response headers: ${headersPrettyPrint(response.headers)}');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('------------------------Upload completed----------------------');
+        print(tusClient.uploadUrl);
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        isComplete = true;
+        testProgressCallback(0, 0, null);
+      },
+      onTimeout: () {
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('------------------------Upload request timeout----------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+        print('--------------------------------------------------------------');
+      },
+    ),
   );
 
   await Future.delayed(const Duration(seconds: 3), () async {
@@ -322,7 +343,10 @@ Future<void> genericVideoUploadTest({
   });
 
   await Future.delayed(const Duration(seconds: 6), () async {
-    tusClient.resumeUpload();
+    // Not awaited on purpose: resumeUpload() completes only when the upload
+    // itself does, so awaiting it here would run the upload to the end and
+    // leave the state completed rather than uploading.
+    uploadAttempts.add(tusClient.resumeUpload());
     expect(tusClient.state, TusUploadState.uploading);
     print('--------------------------------------------------------------');
     print('--------------------------------------------------------------');
@@ -346,7 +370,8 @@ Future<void> genericVideoUploadTest({
   });
 
   await Future.delayed(const Duration(seconds: 14), () async {
-    tusClient.resumeUpload();
+    isRestarted = true;
+    uploadAttempts.add(tusClient.resumeUpload());
     expect(tusClient.state, TusUploadState.uploading);
     print('--------------------------------------------------------------');
     print('--------------------------------------------------------------');
@@ -356,4 +381,27 @@ Future<void> genericVideoUploadTest({
     print('--------------------------------------------------------------');
     print('--------------------------------------------------------------');
   });
+
+  // Surfaces any failure of the attempts that were not awaited above.
+  await Future.wait(uploadAttempts);
+
+  if (tusClient.url.isNotEmpty) {
+    expect(
+      restartedFromOffset,
+      0,
+      reason:
+          'cancelling abandons the upload, so resuming it afterwards has to '
+          'create a new upload and start over from the beginning',
+    );
+  } else {
+    expect(
+      restartedFromOffset,
+      greaterThan(0),
+      reason:
+          'a client built from an explicit uploadUrl has no creation url to '
+          'fall back on, so cancelling only stops it and resuming carries on '
+          'with the same upload',
+    );
+  }
+  expect(tusClient.state, TusUploadState.completed);
 }
